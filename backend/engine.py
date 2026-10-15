@@ -18,6 +18,7 @@ DEFAULT_BOT = {
     "manual_confirm": False, "kill_switch": False, "cash": START_CASH, "position_qty": 0.0, "entry_price": 0.0,
     "realized_pnl": 0.0, "trades_count": 0, "wins": 0, "losses": 0, "alerts_enabled": True, "live_equity": None,
     "last_tick": 0, "pocketoption": None, "auto_fund": True, "start_equity": None, "start_ts": None,
+    "take_profit_pct": 1.5, "stop_loss_pct": 1.0, "trend_filter": True, "volume_filter": True,
 }
 
 
@@ -60,15 +61,33 @@ def _sma(xs, n):
 
 
 def signal(bot: dict) -> dict:
-    closes = [c["c"] for c in SNAPSHOT.get("candles") or []]
+    candles = SNAPSHOT.get("candles") or []
+    closes = [c["c"] for c in candles]
+    price = SNAPSHOT.get("price") or (closes[-1] if closes else 0)
     s7, s25, r = _sma(closes, 7), _sma(closes, 25), SNAPSHOT.get("rsi")
-    if s7 is None or s25 is None or r is None:
+    if s7 is None or s25 is None or r is None or len(candles) < 30:
         return {"action": "HOLD", "confidence": 0.3, "reason": "warming up market data"}
     trend = (s7 - s25) / s25 * 100
     conf = min(0.95, 0.5 + abs(trend) * 5)
     flat = bot["position_qty"] <= 0
+    tp, sl = float(bot.get("take_profit_pct") or 0), float(bot.get("stop_loss_pct") or 0)
+    if not flat and bot.get("entry_price"):
+        move = (price - bot["entry_price"]) / bot["entry_price"] * 100
+        if tp and move >= tp:
+            return {"action": "SELL", "confidence": 0.95, "reason": f"TAKE PROFIT hit {move:+.2f}% (target +{tp}%) · RSI {r}"}
+        if sl and move <= -sl:
+            return {"action": "SELL", "confidence": 0.95, "reason": f"STOP LOSS hit {move:+.2f}% (limit -{sl}%) · RSI {r}"}
     if flat and s7 > s25 and r < 70:
-        return {"action": "BUY", "confidence": conf, "reason": f"SMA7>SMA25 ({trend:+.3f}%) · RSI {r}"}
+        if bot.get("trend_filter", True):
+            s25_prev = _sma(closes[:-5], 25)
+            if price < s25 or (s25_prev and s25 <= s25_prev):
+                return {"action": "HOLD", "confidence": conf, "reason": f"trend filter · price below/flat SMA25 · trend {trend:+.3f}% · RSI {r}"}
+        if bot.get("volume_filter", True):
+            vols = [c["v"] for c in candles[-21:-1]]
+            avg_v = sum(vols) / len(vols) if vols else 0
+            if avg_v and candles[-2]["v"] < avg_v:
+                return {"action": "HOLD", "confidence": conf, "reason": f"volume filter · last vol {candles[-2]['v']:.2f} < avg {avg_v:.2f} · RSI {r}"}
+        return {"action": "BUY", "confidence": conf, "reason": f"SMA7>SMA25 ({trend:+.3f}%) · RSI {r} · trend+volume confirmed"}
     if not flat and (s7 < s25 or r > 75):
         return {"action": "SELL", "confidence": conf, "reason": f"{'SMA7<SMA25' if s7 < s25 else 'RSI overbought'} · RSI {r}"}
     return {"action": "HOLD", "confidence": conf, "reason": f"{'in position' if not flat else 'no entry'} · trend {trend:+.3f}% · RSI {r}"}
@@ -240,8 +259,25 @@ async def tick_bot(bot: dict):
     await db.bot_pnl.insert_one({"user_id": uid, "ts": now_ms(), "equity": equity(bot)})
 
 
+async def mirror_solana(db_, bot, side):
+    import solana_dex
+    try:
+        results = await solana_dex.mirror(bot["user_id"], side)
+    except Exception as e:
+        results = [{"mint": "wallet", "ok": False, "error": str(e)[:160]}]
+    for r in results:
+        if r["ok"]:
+            reason = f"Solana {'SOL→' if side == 'BUY' else '→SOL '}{r['mint'][:6]}… · {r['status']} · {r['ms']}ms"
+            fill = f"SOL #{r['sig'][:10]}"
+        else:
+            reason, fill = f"Solana {r['mint'][:6]}… error: {r['error']}", "REJECTED"
+        await log(db_, bot["user_id"], {"action": side, "engine": "solana", "confidence": 1.0, "reason": reason},
+                  SNAPSHOT.get("price") or 0, fill)
+
+
 async def mirror_all(db_, bot, side):
     import pocket
+    await mirror_solana(db_, bot, side)
     po = bot.get("pocketoption")
     if po:
         try:

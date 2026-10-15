@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { X, Link2, AlertTriangle, Unplug, Bell, Shield, Wallet, Sliders, Send, Server, Radio } from "lucide-react";
+import { X, Link2, AlertTriangle, Unplug, Bell, Shield, Wallet, Sliders, Send, Server, Radio, Coins } from "lucide-react";
 import api, { formatApiErrorDetail } from "../../lib/api";
 import WalletConnect from "./WalletConnect";
+import SolanaTab from "./SolanaTab";
 import RealWallet from "./RealWallet";
 import ExchangeTools from "./ExchangeTools";
 import { toast } from "sonner";
@@ -13,6 +14,7 @@ const TABS = [
   ["alerts", "ALERTS", Bell],
   ["wallet", "WALLET", Wallet],
   ["exchange", "EXCHANGE", Link2],
+  ["solana", "SOLANA DEX", Coins],
 ];
 
 export default function SettingsModal({ bot, onClose, refresh, initialTab = "config" }) {
@@ -45,6 +47,7 @@ export default function SettingsModal({ bot, onClose, refresh, initialTab = "con
           {tab === "alerts" && <AlertsTab bot={bot} refresh={refresh} />}
           {tab === "wallet" && <WalletTab bot={bot} refresh={refresh} connected={connected} goExchange={goExchange} />}
           {tab === "exchange" && <ExchangeTab bot={bot} refresh={refresh} connected={connected} preset={preset} />}
+          {tab === "solana" && <SolanaTab />}
         </div>
       </div>
     </div>
@@ -59,13 +62,26 @@ const PrimaryBtn = ({ children, ...p }) => (
   <button {...p} className="w-full border border-neon-magenta text-neon-magenta hover:bg-neon-magenta hover:text-black transition-colors py-2 text-xs tracking-[0.2em] disabled:opacity-30">{children}</button>
 );
 
+const Toggle = ({ on, onClick, testId, labelOn, labelOff }) => (
+  <button data-testid={testId} onClick={onClick}
+    className={`w-full py-2 text-xs tracking-[0.15em] border transition-colors ${on ? "border-neon-green text-neon-green bg-neon-green/10" : "border-term-border text-term-muted"}`}>
+    {on ? labelOn : labelOff}
+  </button>
+);
+
 function ConfigTab({ bot, refresh, connected }) {
   const [posUsd, setPosUsd] = useState(bot?.position_usd ?? 50);
   const [autoFund, setAutoFund] = useState(bot?.auto_fund ?? true);
+  const [tp, setTp] = useState(bot?.take_profit_pct ?? 1.5);
+  const [sl, setSl] = useState(bot?.stop_loss_pct ?? 1.0);
+  const [trendF, setTrendF] = useState(bot?.trend_filter ?? true);
+  const [volF, setVolF] = useState(bot?.volume_filter ?? true);
 
   const save = async () => {
-    try { await api.post("/bot/config", { position_usd: Number(posUsd), auto_fund: autoFund }); toast.success("Config saved"); refresh(); }
-    catch (e) { toast.error(formatApiErrorDetail(e.response?.data?.detail)); }
+    try {
+      await api.post("/bot/config", { position_usd: Number(posUsd), auto_fund: autoFund, take_profit_pct: Number(tp), stop_loss_pct: Number(sl), trend_filter: trendF, volume_filter: volF });
+      toast.success("Config saved"); refresh();
+    } catch (e) { toast.error(formatApiErrorDetail(e.response?.data?.detail)); }
   };
   return (
     <div className="space-y-5">
@@ -73,6 +89,24 @@ function ConfigTab({ bot, refresh, connected }) {
       <div>
         <Label>POSITION SIZE (USD PER TRADE)</Label>
         <Input data-testid="position-size-input" type="number" min="1" value={posUsd} onChange={(e) => setPosUsd(e.target.value)} />
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <Label>TAKE PROFIT (%)</Label>
+          <Input data-testid="take-profit-input" type="number" min="0" step="0.1" value={tp} onChange={(e) => setTp(e.target.value)} />
+        </div>
+        <div>
+          <Label>STOP LOSS (%)</Label>
+          <Input data-testid="stop-loss-input" type="number" min="0" step="0.1" value={sl} onChange={(e) => setSl(e.target.value)} />
+        </div>
+      </div>
+      <p className="text-[9px] text-term-muted -mt-3">The bot checks the market every 5 seconds and exits the position as soon as either target is hit. 0 disables a target.</p>
+      <div>
+        <Label>ENTRY FILTERS</Label>
+        <div className="space-y-2">
+          <Toggle on={trendF} onClick={() => setTrendF(!trendF)} testId="trend-filter-toggle" labelOn="TREND FILTER ON · BUY ONLY ABOVE A RISING SMA25" labelOff="TREND FILTER OFF" />
+          <Toggle on={volF} onClick={() => setVolF(!volF)} testId="volume-filter-toggle" labelOn="VOLUME FILTER ON · BUY ONLY ON ABOVE-AVERAGE VOLUME" labelOff="VOLUME FILTER OFF" />
+        </div>
       </div>
       <div>
         <Label>AUTO-FUND FROM FUNDING ACCOUNT</Label>

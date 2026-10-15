@@ -19,6 +19,7 @@ import brokers  # noqa: E402
 import engine  # noqa: E402
 import market  # noqa: E402
 import pocket  # noqa: E402
+import solana_dex  # noqa: E402
 from auth import (check_lockout, clear_fails, create_token, current_user, hash_password, public_user,  # noqa: E402
                   record_fail, seed_admin, verify_password)
 from db import db, now_ms  # noqa: E402
@@ -117,6 +118,10 @@ class ConfigIn(BaseModel):
     daily_loss_limit: Optional[float] = Field(None, ge=0)
     manual_confirm: Optional[bool] = None
     auto_fund: Optional[bool] = None
+    take_profit_pct: Optional[float] = Field(None, ge=0, le=100)
+    stop_loss_pct: Optional[float] = Field(None, ge=0, le=100)
+    trend_filter: Optional[bool] = None
+    volume_filter: Optional[bool] = None
 
 
 @api.post("/bot/config")
@@ -639,6 +644,107 @@ async def mirror_test(user=Depends(current_user)):
         bad("No brokers linked")
     asyncio.create_task(engine.mirror_all(db, bot, "BUY"))
     return {"ok": True}
+
+
+# ---------- solana DEX ----------
+class SolImportIn(BaseModel):
+    secret: str = Field(..., min_length=20)
+
+
+class SolConfigIn(BaseModel):
+    tokens: Optional[list[str]] = Field(None, max_length=5)
+    amount_sol: Optional[float] = Field(None, gt=0)
+    slippage_bps: Optional[int] = Field(None, ge=10, le=5000)
+    enabled: Optional[bool] = None
+
+
+class SolSwapIn(BaseModel):
+    mint: str
+    side: Literal["BUY", "SELL"]
+
+
+async def sol_view(user) -> dict:
+    w = await solana_dex.get_wallet(user["id"])
+    if not w:
+        return {"connected": False}
+    out = {k: v for k, v in w.items() if k != "secret_enc"}
+    out["connected"] = True
+    try:
+        bal, info = await asyncio.gather(solana_dex.balances(w["pubkey"]), solana_dex.token_info(w.get("tokens") or []))
+        out["sol_balance"] = bal["sol"]
+        out["token_balances"] = {m: {**(bal["tokens"].get(m) or {"ui": 0.0, "raw": 0}), **info.get(m, {})} for m in w.get("tokens") or []}
+    except Exception as e:
+        out["error"] = str(e)[:160]
+    return out
+
+
+@api.get("/solana/wallet")
+async def sol_wallet(user=Depends(current_user)):
+    return await sol_view(user)
+
+
+@api.post("/solana/wallet/import")
+async def sol_import(body: SolImportIn, user=Depends(current_user)):
+    try:
+        pub = await solana_dex.import_wallet(user["id"], body.secret)
+    except Exception:
+        bad("Invalid Solana private key. Paste the base58 key from Phantom/Solflare or the JSON byte array.")
+    return {"ok": True, "pubkey": pub}
+
+
+@api.delete("/solana/wallet")
+async def sol_remove(user=Depends(current_user)):
+    await db.solana_wallets.delete_one({"user_id": user["id"]})
+    return {"ok": True}
+
+
+@api.post("/solana/config")
+async def sol_config(body: SolConfigIn, user=Depends(current_user)):
+    if not await solana_dex.get_wallet(user["id"]):
+        bad("Import a Solana wallet first")
+    upd = body.model_dump(exclude_none=True)
+    if "tokens" in upd:
+        upd["tokens"] = [t.strip() for t in upd["tokens"] if 32 <= len(t.strip()) <= 44]
+    if upd:
+        await db.solana_wallets.update_one({"user_id": user["id"]}, {"$set": upd})
+    return await sol_view(user)
+
+
+@api.get("/solana/tokens/search")
+async def sol_search(q: str, user=Depends(current_user)):
+    try:
+        return await solana_dex.search(q.strip())
+    except Exception as e:
+        bad(f"Token search failed: {str(e)[:120]}")
+
+
+@api.post("/solana/swap")
+async def sol_swap(body: SolSwapIn, user=Depends(current_user)):
+    w = await solana_dex.get_wallet(user["id"]) or bad("Import a Solana wallet first")
+    bot = await get_bot(user)
+    try:
+        bal = await solana_dex.balances(w["pubkey"])
+        if body.side == "BUY":
+            res = await solana_dex.swap(user["id"], solana_dex.SOL, body.mint, int(float(w.get("amount_sol") or 0) * solana_dex.LAMPORTS))
+        else:
+            raw = (bal["tokens"].get(body.mint) or {}).get("raw", 0) or bad("No balance of that token to sell")
+            res = await solana_dex.swap(user["id"], body.mint, solana_dex.SOL, raw)
+    except HTTPException:
+        raise
+    except Exception as e:
+        await engine.log(db, user["id"], {"action": body.side, "engine": "solana", "confidence": 1.0,
+                                          "reason": f"Manual Solana swap error: {str(e)[:140]}"}, SNAPSHOT.get("price"), "REJECTED")
+        bad(f"Swap failed: {str(e)[:200]}")
+    await engine.log(db, user["id"], {"action": body.side, "engine": "solana", "confidence": 1.0,
+                                      "reason": f"Manual Solana swap {body.mint[:6]}… · {res['status']} · {res['ms']}ms"},
+                     SNAPSHOT.get("price"), f"SOL #{res['sig'][:10]}")
+    await alerts.notify(bot, f"◎ Solana {body.side} {body.mint[:6]}… {res['status']}")
+    return res
+
+
+@api.get("/solana/swaps")
+async def sol_swaps(user=Depends(current_user)):
+    return [s async for s in db.solana_swaps.find({"user_id": user["id"]}, {"_id": 0}).sort("ts", -1).limit(50)]
 
 
 # ---------- chat / help ----------
