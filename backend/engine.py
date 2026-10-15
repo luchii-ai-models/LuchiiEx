@@ -61,7 +61,10 @@ def pos_fields(asset: str, qty=None, entry=None, peak=None, tp_taken=None) -> di
 
 
 def mkt(asset: str) -> dict:
-    return (SNAPSHOT.get("markets") or {}).get(asset) or {"price": SNAPSHOT.get("price"), "candles": SNAPSHOT.get("candles"), "rsi": SNAPSHOT.get("rsi")}
+    m = (SNAPSHOT.get("markets") or {}).get(asset)
+    if m:
+        return m
+    return {"price": SNAPSHOT.get("price"), "candles": SNAPSHOT.get("candles"), "rsi": SNAPSHOT.get("rsi")} if asset == "BTC" else {}
 
 
 def equity(bot: dict) -> float:
@@ -71,8 +74,8 @@ def equity(bot: dict) -> float:
     return round(bot["cash"] + bot["position_qty"] * (SNAPSHOT.get("price") or 0) + alts, 2)
 
 
-async def log(db_, uid, d, price, fill=None):
-    c = SNAPSHOT.get("candles") or []
+async def log(db_, uid, d, price, fill=None, asset: str = "BTC"):
+    c = mkt(asset).get("candles") or []
     pct = round((c[-1]["c"] - c[-2]["c"]) / c[-2]["c"] * 100, 3) if len(c) > 1 else 0.0
     await db_.bot_logs.insert_one({"user_id": uid, "ts": now_ms(), "action": d["action"], "price": float(price or 0),
                                    "pct": pct, "engine": d.get("engine", "algo"), "confidence": float(d.get("confidence", 0.5)),
@@ -168,7 +171,7 @@ async def record_fill(bot: dict, side: str, price: float, qty: float, fill: str,
             upd["cash"] = bot["cash"] + qty * price
     await set_bot(uid, **upd)
     await db.bot_trades.insert_one({"user_id": uid, "ts": now_ms(), "side": side, "asset": asset, "price": price, "qty": qty, "pnl": pnl})
-    await log(db, uid, d, price, fill)
+    await log(db, uid, d, price, fill, asset)
     await alerts.notify(bot, f"{'🟢' if side == 'BUY' else '🔴'} {side} {qty} {asset} @ ${price:,.2f}" + (f" · P&L {pnl:+.2f}" if side == "SELL" else ""))
     bot = await db.bots.find_one({"user_id": uid})
     if not d.get("partial") and asset == "BTC":
@@ -227,7 +230,15 @@ async def execute(bot: dict, d: dict, asset: str = "BTC"):
         symbol = await resolve_symbol(ex, creds["exchange"], asset)
         quote = symbol.split("/")[1]
         if side == "BUY":
-            await auto_fund(ex, uid, creds["exchange"], symbol, side, order_usd(bot), 0, bot.get("auto_fund", True))
+            if bot.get("auto_fund", True) and float(bot.get("size_pct") or 0) > 0:
+                try:
+                    bal = await all_balances(ex, creds["exchange"])
+                    want = order_usd(bot, sum(float(b.get(quote) or 0) for b in bal.values()))
+                except Exception:
+                    want = order_usd(bot)
+            else:
+                want = order_usd(bot)
+            await auto_fund(ex, uid, creds["exchange"], symbol, side, want, 0, bot.get("auto_fund", True))
             have = await free_of(ex, quote)
             usd = order_usd(bot, have)
         else:
@@ -256,7 +267,7 @@ async def execute(bot: dict, d: dict, asset: str = "BTC"):
             qty = float(o.get("filled") or 0) or qty
         await record_fill(bot, side, float(o.get("average") or price), round(qty, 8), f"LIVE FILLED #{o.get('id')}", d, asset)
     except Exception as e:
-        await log(db, uid, {**d, "reason": f"{d['reason']} · order error: {friendly(e)[:160]}"}, price, "REJECTED")
+        await log(db, uid, {**d, "reason": f"{d['reason']} · order error: {friendly(e)[:160]}"}, price, "REJECTED", asset)
     finally:
         await ex.close()
 
@@ -321,9 +332,10 @@ async def tick_bot(bot: dict):
         if d["action"] == "HOLD":
             if time.time() - bot.get(key, 0) >= 60:
                 await set_bot(uid, **{key: time.time()})
-                await log(db, uid, d, price)
+                await log(db, uid, d, price, asset=asset)
         elif bot["mode"] == "live" and bot.get("manual_confirm"):
-            await set_bot(uid, pending={"action": d["action"], "asset": asset, "price": price, "size_usd": order_usd(bot),
+            size = order_usd(bot, bot.get("live_equity")) if bot.get("size_pct") and bot.get("live_equity") else order_usd(bot)
+            await set_bot(uid, pending={"action": d["action"], "asset": asset, "price": price, "size_usd": size,
                                         "reason": d["reason"], "decision": d, "ts": now_ms()})
             await alerts.notify(bot, f"⏳ Confirm {d['action']} {asset} @ ${price:,.2f} in the terminal")
             break

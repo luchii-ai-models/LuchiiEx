@@ -59,6 +59,12 @@ User choices: copy from trade-bridge-73; use the env values exactly; no Emergent
 - iteration_8 report: 11 new + 35 regression tests pass, frontend flows pass at 1920/390.
 - Honest note: win rate depends on the market; with $1 positions exchange fees (~0.1%/side) dominate — larger position size needed for meaningful gains.
 
+## Implemented (2026-10-15, iteration 11 — "boost": aggressive multi-market scalping)
+- User-approved boost applied to ALL bots (migration db.meta boost_v1): `aggressive` (SMA 5/13, RSI cap 80, trend filter = price above SMA13 only, volume filter skipped), `size_pct` 50 (% of free quote balance per trade; 0 = fixed position_usd), TP +0.6% / SL −0.4% (trailing + partial TP still apply), `assets` [BTC, ETH, SOL]. No fee guard (user choice).
+- market.py fetches Coinbase ticker+candles for BTC/ETH/SOL → SNAPSHOT.markets. engine generalised per asset (pos_of/pos_fields/mkt; ETH/SOL positions in bot.alt_positions.<ASSET>); execute() resolves <ASSET>/<quote> per exchange, checks min amount & min cost; sync_position covers all assets; total_usd counts ETH/SOL holdings.
+- UI: CONFIG tab has MARKETS toggles, AGGRESSIVE toggle, % of balance input, risk warning; filter labels reflect aggressive mode; status card shows alt positions and %/TRADE.
+- iteration_9: 14 new + 46 regression tests pass; UI verified 1920/390. Testing-agent minors fixed (mkt() no BTC fallback for alts, % size used for auto-fund amount, per-asset log pct, pending size).
+
 ## Known limits
 - Live order placement has not been tested with real keys
 - Some exchanges reject fake secrets with a decode error before the auth call; this is still shown as "Exchange verification failed: …"

@@ -1,0 +1,42 @@
+{
+  "summary": "Iter 9 boost testing (aggressive preset, size_pct, scalp TP/SL 0.6/0.4, multi-market BTC/ETH/SOL). Backend: new tests/test_iteration9_boost.py has 14 tests, all pass. The iteration 6/7/8 regression suites also pass (60/60, -n 0). Checked: /api/market/snapshot has markets.BTC/ETH/SOL with price>0, 60 candles and rsi, and the legacy keys are still there. A fresh user gets the defaults aggressive=true, size_pct=50, assets [BTC,ETH,SOL], TP 0.6, SL 0.4. /bot/config saves aggressive, size_pct and assets, and returns 422 for DOGE, an empty assets list, size_pct 150 and size_pct -1. Engine units: ETH partial TP reads alt_positions.ETH and BTC is not affected. RSI 75 gives BUY when aggressive and HOLD when standard. A low last volume still gives BUY when aggressive, while standard HOLDs with 'volume filter'. pos_fields works. order_usd gives 50% of balance, falls back to position_usd when size_pct is 0, and respects the max_order_usd cap. Paper equity counts alt positions. The paper execute() path was run directly through the engine on a test user's bot: an ETH BUY then a partial SELL writes alt_positions.ETH.{qty,entry,tp_taken}, and 2 bot_trades rows are tagged asset=ETH. /bot/reset then sets alt_positions to {}, peak to 0 and tp_taken to false. Frontend (admin, 1920 and 390): the asset toggles are cyan when active, and the last asset cannot be deselected. The aggressive toggle and the size/position/TP/SL inputs (0.6/0.4) are present. Saving 30% with SOL off shows the 'Config saved' toast and persists on reopen. The status card shows 'POS: FLAT' with '30%/TRADE', then '50%/TRADE' after restore. There is no horizontal overflow at either size. The Solana tab loads and the footer text matches exactly. The admin config was restored (BTC/ETH/SOL, 50%, aggressive, stopped). No bot was started and the live OKX user was never touched.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "engine.mkt", "issue": "If SNAPSHOT.markets lacks an asset (for example before the first refresh, or after a partial Coinbase failure that keeps stale markets), mkt('ETH') falls back to BTC price/candles/rsi. ETH/SOL would then be evaluated (and could be traded) on BTC data. Return an empty market instead of the BTC fallback for non-BTC assets."},
+      {"endpoint": "engine.execute (live BUY)", "issue": "auto_fund is passed order_usd(bot) without `have`, so it moves position_usd ($50), not size_pct of the balance. The pct-based size is computed only after funding. When most of the money sits in the funding account, the order is sized from the small trading balance."},
+      {"endpoint": "engine.log", "issue": "The 'pct' field always uses BTC candles, even for ETH/SOL decisions."},
+      {"endpoint": "engine.tick_bot (manual_confirm)", "issue": "The pending order's size_usd uses order_usd(bot) without a balance, so it shows position_usd, not the % size that will actually be used."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Settings > Config", "issues": [
+        "The 'FIXED SIZE (USD) · USED WHEN % IS 0' label wraps to 2 lines (3 on mobile), so the size-pct and position-size inputs sit at different heights. Shorten the label or align the items to the end.",
+        "The TREND FILTER label says 'BUY ONLY ABOVE A RISING SMA25' and VOLUME FILTER shows ON, but in aggressive mode the engine uses SMA13 without the rising check and ignores the volume filter. The labels mislead the user; show 'relaxed by AGGRESSIVE' or disable these toggles while aggressive is on.",
+        "The ConfigTab useState fallbacks are still tp 1.5 / sl 1.0, which do not match the new defaults 0.6 / 0.4. This is cosmetic only, since the bot always provides values."
+      ]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iteration9_boost.py", "/app/test_reports/pytest/pytest_iter9.xml"],
+  "action_items": [
+    "engine.mkt: do not fall back to BTC data for ETH/SOL (return {} so signal() HOLDs while warming up)",
+    "Optional: in live BUY, pass the % size to auto_fund (for example, compute from the funding+trading balance)",
+    "Optional: fix the Config labels for the trend/volume filters in aggressive mode, and the FIXED SIZE label misalignment"
+  ],
+  "critical_code_review_comments": [
+    "The startup migration boost_v1 overwrites TP/SL/size/assets/aggressive for ALL existing bots, including the running live OKX bot. That bot now trades 3 markets at 50% of the free balance per trade. This matches the user's choice, but it is high risk; make sure the user is aware.",
+    "Existing bots have no alt_positions key, so the dotted $set creates it. If any bot ever has alt_positions: null, the $set 'alt_positions.ETH.qty' would fail with a Mongo error. reset sets {}, which is fine.",
+    "With 3 assets at 50% each, the 2nd and 3rd BUYs in the same tick use 50% of what is left (50/25/12.5%). That is fine, but worth documenting.",
+    "server.py is 891 lines (over 700). Consider splitting the routers."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration9_boost.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin@gravia.io / Gravia@2026 (UI and API login OK). Test users test_it9_* were registered and deleted.",
+  "seed_data_creation": "None kept. The test_it9 user and its bots/logs/trades/pnl were deleted by user_id (0 remain). The admin config was restored to assets [BTC,ETH,SOL], size_pct 50, aggressive true, status stopped.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: cd /app/backend && set -a && . ../frontend/.env && . ./.env && set +a && pytest tests/test_iteration9_boost.py tests/test_iteration6_solana_risk.py tests/test_iteration7_token_tpsl.py tests/test_iteration8_exit_rules.py -n 0. The `snap` fixture patches SNAPSHOT.markets[asset]. test_paper_execute_alt_then_reset runs engine.execute in paper mode via asyncio.run on the test user's bot (sets mode paper directly in Mongo, then back to live). Never touch user 6ad0c885f4fa421663189000 (it is running live)."
+}

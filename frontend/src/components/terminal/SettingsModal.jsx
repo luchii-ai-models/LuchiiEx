@@ -72,8 +72,8 @@ const Toggle = ({ on, onClick, testId, labelOn, labelOff }) => (
 function ConfigTab({ bot, refresh, connected }) {
   const [posUsd, setPosUsd] = useState(bot?.position_usd ?? 50);
   const [autoFund, setAutoFund] = useState(bot?.auto_fund ?? true);
-  const [tp, setTp] = useState(bot?.take_profit_pct ?? 1.5);
-  const [sl, setSl] = useState(bot?.stop_loss_pct ?? 1.0);
+  const [tp, setTp] = useState(bot?.take_profit_pct ?? 0.6);
+  const [sl, setSl] = useState(bot?.stop_loss_pct ?? 0.4);
   const [trendF, setTrendF] = useState(bot?.trend_filter ?? true);
   const [volF, setVolF] = useState(bot?.volume_filter ?? true);
   const [trail, setTrail] = useState(bot?.trailing_stop ?? true);
@@ -102,13 +102,13 @@ function ConfigTab({ bot, refresh, connected }) {
         </div>
       </div>
       <Toggle on={aggr} onClick={() => setAggr(!aggr)} testId="aggressive-toggle" labelOn="AGGRESSIVE · SMA 5/13 · RSI CAP 80 · RELAXED FILTERS" labelOff="STANDARD · SMA 7/25 · RSI CAP 70 · FULL FILTERS" />
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-2 gap-4 items-end">
         <div>
           <Label>% OF BALANCE PER TRADE</Label>
           <Input data-testid="size-pct-input" type="number" min="0" max="100" step="5" value={sizePct} onChange={(e) => setSizePct(e.target.value)} />
         </div>
         <div>
-          <Label>FIXED SIZE (USD) · USED WHEN % IS 0</Label>
+          <Label>FIXED USD (IF % = 0)</Label>
           <Input data-testid="position-size-input" type="number" min="1" value={posUsd} onChange={(e) => setPosUsd(e.target.value)} />
         </div>
       </div>
@@ -128,10 +128,10 @@ function ConfigTab({ bot, refresh, connected }) {
       <Toggle on={partial} onClick={() => setPartial(!partial)} testId="partial-tp-toggle" labelOn="PARTIAL TAKE PROFIT ON · SELL HALF AT TARGET, REST RIDES" labelOff="PARTIAL TAKE PROFIT OFF · SELL ALL AT TARGET" />
       <p className="text-[9px] text-term-muted -mt-3">With trailing on, the stop-loss % is measured from the highest price since entry, so gains get locked in as the price rises.</p>
       <div>
-        <Label>ENTRY FILTERS</Label>
-        <div className="space-y-2">
-          <Toggle on={trendF} onClick={() => setTrendF(!trendF)} testId="trend-filter-toggle" labelOn="TREND FILTER ON · BUY ONLY ABOVE A RISING SMA25" labelOff="TREND FILTER OFF" />
-          <Toggle on={volF} onClick={() => setVolF(!volF)} testId="volume-filter-toggle" labelOn="VOLUME FILTER ON · BUY ONLY ON ABOVE-AVERAGE VOLUME" labelOff="VOLUME FILTER OFF" />
+        <Label>ENTRY FILTERS{aggr ? " · RELAXED BY AGGRESSIVE MODE" : ""}</Label>
+        <div className={`space-y-2 ${aggr ? "opacity-50" : ""}`}>
+          <Toggle on={trendF} onClick={() => setTrendF(!trendF)} testId="trend-filter-toggle" labelOn={aggr ? "TREND FILTER ON · BUY ONLY ABOVE SMA13 (AGGRESSIVE)" : "TREND FILTER ON · BUY ONLY ABOVE A RISING SMA25"} labelOff="TREND FILTER OFF" />
+          <Toggle on={volF && !aggr} onClick={() => setVolF(!volF)} testId="volume-filter-toggle" labelOn="VOLUME FILTER ON · BUY ONLY ON ABOVE-AVERAGE VOLUME" labelOff={aggr ? "VOLUME FILTER SKIPPED IN AGGRESSIVE MODE" : "VOLUME FILTER OFF"} />
         </div>
       </div>
       <div>
