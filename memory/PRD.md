@@ -22,6 +22,13 @@ User choices: copy from trade-bridge-73; use the env values exactly; no Emergent
 - Full frontend and backend clone; iteration_1 passed 31/31 backend tests and all UI flows
 - Chat and help return "temporarily unavailable" (no LLM key, as the user chose)
 
+## Implemented (2026-10-15, iteration 2)
+- OKX now finds the right region automatically (global, US, EEA). The user's key is an OKX US key (us.okx.com). OKX error codes now show plain-language messages.
+- The app reads each key's permissions (read/trade/withdraw/transfer) and warns when Trade or Withdraw is missing.
+- Exchange tab: account sync (trading and funding balances) and manual market BUY/SELL.
+- Wallet tab: balances per account, deposit address per coin and network, funding⇄trading transfer, withdraw with network, fee and memo, and deposit/withdrawal history.
+- Self-custody wallets show real balances (mempool.space / public ETH RPC) and offer SEND TO EXCHANGE, which the user signs in OKX Wallet, MetaMask or Coinbase Wallet.
+
 ## Known limits
 - Live order placement has not been tested with real keys
 - Some exchanges reject fake secrets with a decode error before the auth call; this is still shown as "Exchange verification failed: …"
