@@ -71,6 +71,7 @@ function SolWallet({ w, reload }) {
   const [slip, setSlip] = useState(w.slippage_bps ?? 300);
   const [tp, setTp] = useState(w.token_tp_pct ?? 25);
   const [sl, setSl] = useState(w.token_sl_pct ?? 15);
+  const [trail, setTrail] = useState(w.trailing_stop ?? true);
   const [enabled, setEnabled] = useState(!!w.enabled);
   const [q, setQ] = useState("");
   const [hits, setHits] = useState([]);
@@ -111,6 +112,10 @@ function SolWallet({ w, reload }) {
         <div><Label>TOKEN STOP LOSS (%)</Label><Input data-testid="solana-sl-input" type="number" step="1" min="0" max="100" value={sl} onChange={(e) => setSl(e.target.value)} /></div>
       </div>
       <p className="text-[10px] text-term-muted -mt-3">Token prices are checked every 5s. A hit sells that token back to SOL on its own, independent of the BTC bot. Override per token below.</p>
+      <button data-testid="solana-trailing-toggle" onClick={() => { setTrail(!trail); cfg({ trailing_stop: !trail }); }}
+        className={`w-full py-2 text-xs tracking-[0.15em] border transition-colors ${trail ? "border-neon-green text-neon-green bg-neon-green/10" : "border-term-border text-term-muted"}`}>
+        {trail ? "TRAILING STOP ON · SL MEASURED FROM PEAK" : "TRAILING STOP OFF · SL FROM ENTRY"}
+      </button>
       <Btn data-testid="solana-save-button" onClick={() => cfg({ amount_sol: Number(amount), slippage_bps: Number(slip), token_tp_pct: Number(tp), token_sl_pct: Number(sl) })}>SAVE</Btn>
 
       <div>
@@ -126,7 +131,7 @@ function SolWallet({ w, reload }) {
               <div className="flex justify-between text-[10px] text-term-muted mt-1"><span className="font-mono">{m.slice(0, 10)}…{m.slice(-6)}</span><span>bal {t.ui ?? 0} {t.price ? `· $${Number(t.price).toPrecision(3)}` : ""}</span></div>
               {t.entry_usd ? (
                 <div data-testid={`solana-pos-${m}`} className="flex justify-between text-[10px] mt-1">
-                  <span className="text-term-muted">entry ${Number(t.entry_usd).toPrecision(3)}</span>
+                  <span className="text-term-muted">entry ${Number(t.entry_usd).toPrecision(3)}{t.peak_usd ? ` · peak $${Number(t.peak_usd).toPrecision(3)}` : ""}</span>
                   <span className={t.move_pct >= 0 ? "text-neon-green" : "text-neon-red"}>{t.move_pct != null ? `${t.move_pct >= 0 ? "+" : ""}${t.move_pct}%` : "—"} · TP +{t.tp_pct}% / SL −{t.sl_pct}%</span>
                 </div>
               ) : <div className="text-[10px] text-term-muted mt-1">no open position · TP +{t.tp_pct}% / SL −{t.sl_pct}%</div>}

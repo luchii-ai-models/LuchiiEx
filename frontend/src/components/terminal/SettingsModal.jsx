@@ -76,10 +76,11 @@ function ConfigTab({ bot, refresh, connected }) {
   const [sl, setSl] = useState(bot?.stop_loss_pct ?? 1.0);
   const [trendF, setTrendF] = useState(bot?.trend_filter ?? true);
   const [volF, setVolF] = useState(bot?.volume_filter ?? true);
+  const [trail, setTrail] = useState(bot?.trailing_stop ?? true);
 
   const save = async () => {
     try {
-      await api.post("/bot/config", { position_usd: Number(posUsd), auto_fund: autoFund, take_profit_pct: Number(tp), stop_loss_pct: Number(sl), trend_filter: trendF, volume_filter: volF });
+      await api.post("/bot/config", { position_usd: Number(posUsd), auto_fund: autoFund, take_profit_pct: Number(tp), stop_loss_pct: Number(sl), trend_filter: trendF, volume_filter: volF, trailing_stop: trail });
       toast.success("Config saved"); refresh();
     } catch (e) { toast.error(formatApiErrorDetail(e.response?.data?.detail)); }
   };
@@ -101,6 +102,8 @@ function ConfigTab({ bot, refresh, connected }) {
         </div>
       </div>
       <p className="text-[9px] text-term-muted -mt-3">The bot checks the market every 5 seconds and exits the position as soon as either target is hit. 0 disables a target.</p>
+      <Toggle on={trail} onClick={() => setTrail(!trail)} testId="trailing-stop-toggle" labelOn="TRAILING STOP ON · STOP FOLLOWS THE PEAK PRICE" labelOff="TRAILING STOP OFF · FIXED STOP FROM ENTRY" />
+      <p className="text-[9px] text-term-muted -mt-3">With trailing on, the stop-loss % is measured from the highest price since entry, so gains get locked in as the price rises.</p>
       <div>
         <Label>ENTRY FILTERS</Label>
         <div className="space-y-2">

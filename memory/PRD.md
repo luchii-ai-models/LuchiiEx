@@ -44,6 +44,10 @@ User choices: copy from trade-bridge-73; use the env values exactly; no Emergent
 - Per-token take-profit/stop-loss: wallet defaults token_tp_pct 25 / token_sl_pct 15, per-mint overrides (token_cfg.<mint>.tp_pct/.sl_pct, merged per field, DELETE /api/solana/config/token/{mint} resets). Each SOL→token buy records positions.<mint> {entry_usd, raw}; solana_dex.watcher() checks Jupiter price/v3 every 5s and sells the token back to SOL on a hit, independent of the BTC bot; failed sells back off 2 min. UI shows entry, move %, TP/SL per token, override and "use defaults".
 - iteration_7: 13/13 new + 22/22 regression backend tests, all frontend flows passed.
 
+## Implemented (2026-10-15, iteration 8 — trailing stop)
+- BTC bot: `trailing_stop` (default on) + `peak_price` tracked every tick while in position; stop-loss % is measured from the peak once price is above entry ("TRAILING STOP hit … locked +x%"), fixed stop from entry otherwise / when off. Config tab toggle.
+- Solana tokens: wallet `trailing_stop` (default on) + `positions.<mint>.peak_usd` updated by the watcher; same peak-based rule; token cards show peak. Verified by unit checks on engine.signal, API round-trips and a simulated watcher position; 35/35 regression tests pass.
+
 ## Known limits
 - Live order placement has not been tested with real keys
 - Some exchanges reject fake secrets with a decode error before the auth call; this is still shown as "Exchange verification failed: …"

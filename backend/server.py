@@ -122,6 +122,7 @@ class ConfigIn(BaseModel):
     stop_loss_pct: Optional[float] = Field(None, ge=0, le=100)
     trend_filter: Optional[bool] = None
     volume_filter: Optional[bool] = None
+    trailing_stop: Optional[bool] = None
 
 
 @api.post("/bot/config")
@@ -663,6 +664,7 @@ class SolConfigIn(BaseModel):
     enabled: Optional[bool] = None
     token_tp_pct: Optional[float] = Field(None, ge=0, le=10000)
     token_sl_pct: Optional[float] = Field(None, ge=0, le=100)
+    trailing_stop: Optional[bool] = None
     token_cfg: Optional[dict[str, TokenCfg]] = None
 
 
@@ -686,8 +688,10 @@ async def sol_view(user) -> dict:
             pos = (w.get("positions") or {}).get(m) or {}
             tp, sl = solana_dex.token_targets(w, m)
             entry, p = float(pos.get("entry_usd") or 0), px.get(m)
+            peak = max(float(pos.get("peak_usd") or 0), entry)
             out["token_balances"][m] = {**(bal["tokens"].get(m) or {"ui": 0.0, "raw": 0}), **info.get(m, {}), "price": p,
                                         "entry_usd": entry or None, "move_pct": round((p - entry) / entry * 100, 2) if p and entry else None,
+                                        "peak_usd": peak or None, "from_peak_pct": round((p - peak) / peak * 100, 2) if p and peak else None,
                                         "tp_pct": tp, "sl_pct": sl, "overridden": m in (w.get("token_cfg") or {})}
     except Exception as e:
         out["error"] = str(e)[:160]

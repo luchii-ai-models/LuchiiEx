@@ -18,7 +18,7 @@ DEFAULT_BOT = {
     "manual_confirm": False, "kill_switch": False, "cash": START_CASH, "position_qty": 0.0, "entry_price": 0.0,
     "realized_pnl": 0.0, "trades_count": 0, "wins": 0, "losses": 0, "alerts_enabled": True, "live_equity": None,
     "last_tick": 0, "pocketoption": None, "auto_fund": True, "start_equity": None, "start_ts": None,
-    "take_profit_pct": 1.5, "stop_loss_pct": 1.0, "trend_filter": True, "volume_filter": True,
+    "take_profit_pct": 1.5, "stop_loss_pct": 1.0, "trend_filter": True, "volume_filter": True, "trailing_stop": True, "peak_price": 0.0,
 }
 
 
@@ -75,7 +75,12 @@ def signal(bot: dict) -> dict:
         move = (price - bot["entry_price"]) / bot["entry_price"] * 100
         if tp and move >= tp:
             return {"action": "SELL", "confidence": 0.95, "reason": f"TAKE PROFIT hit {move:+.2f}% (target +{tp}%) · RSI {r}"}
-        if sl and move <= -sl:
+        peak = max(float(bot.get("peak_price") or 0), bot["entry_price"])
+        if sl and bot.get("trailing_stop", True) and peak > bot["entry_price"]:
+            drop = (price - peak) / peak * 100
+            if drop <= -sl:
+                return {"action": "SELL", "confidence": 0.95, "reason": f"TRAILING STOP hit {drop:+.2f}% from peak ${peak:,.0f} (locked {move:+.2f}%) · RSI {r}"}
+        elif sl and move <= -sl:
             return {"action": "SELL", "confidence": 0.95, "reason": f"STOP LOSS hit {move:+.2f}% (limit -{sl}%) · RSI {r}"}
     if flat and s7 > s25 and r < 70:
         if bot.get("trend_filter", True):
@@ -109,12 +114,12 @@ async def record_fill(bot: dict, side: str, price: float, qty: float, fill: str,
     pnl = 0.0
     upd = {"trades_count": bot["trades_count"] + 1}
     if side == "BUY":
-        upd.update(position_qty=qty, entry_price=price)
+        upd.update(position_qty=qty, entry_price=price, peak_price=price)
         if bot["mode"] != "live":
             upd["cash"] = bot["cash"] - qty * price
     else:
         pnl = round((price - bot["entry_price"]) * qty, 2)
-        upd.update(position_qty=0.0, entry_price=0.0, realized_pnl=round(bot["realized_pnl"] + pnl, 2),
+        upd.update(position_qty=0.0, entry_price=0.0, peak_price=0.0, realized_pnl=round(bot["realized_pnl"] + pnl, 2),
                    wins=bot["wins"] + (pnl > 0), losses=bot["losses"] + (pnl <= 0))
         if bot["mode"] != "live":
             upd["cash"] = bot["cash"] + qty * price
@@ -206,7 +211,7 @@ async def sync_position(bot: dict, bal: dict):
     btc = sum(float(b.get("BTC") or 0) for b in bal.values())
     uid = bot["user_id"]
     if bot.get("position_qty", 0) <= 0 and btc >= 1e-5:
-        await set_bot(uid, position_qty=round(btc, 8), entry_price=price)
+        await set_bot(uid, position_qty=round(btc, 8), entry_price=price, peak_price=price)
         await log(db, uid, {"action": "HOLD", "engine": "sync", "confidence": 1.0,
                             "reason": f"Synced position: {round(btc, 8)} BTC on exchange · entry set to ${price:,.2f} (P&L counted from now)"}, price, "SYNCED")
     elif bot.get("position_qty", 0) > 0 and btc < bot["position_qty"] * 0.5:
@@ -243,6 +248,9 @@ async def tick_bot(bot: dict):
         bot = await db.bots.find_one({"user_id": uid})
     if bot.get("pending"):
         return
+    if bot["position_qty"] > 0 and SNAPSHOT["price"] > float(bot.get("peak_price") or 0):
+        bot["peak_price"] = SNAPSHOT["price"]
+        await set_bot(uid, peak_price=SNAPSHOT["price"])
     d = signal(bot)
     d["engine"] = "algo"
     if d["action"] == "HOLD":
