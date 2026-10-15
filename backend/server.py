@@ -24,7 +24,7 @@ from auth import (check_lockout, clear_fails, create_token, current_user, hash_p
 from db import db, now_ms  # noqa: E402
 from engine import DEFAULT_BOT, get_creds, set_bot, with_exchange  # noqa: E402
 from exchange_service import (ACCOUNTS, EXCHANGES, all_balances, encrypt, friendly, market_order,  # noqa: E402
-                              nonzero_balances, permissions, symbol_for, total_usd, verify)
+                              nonzero_balances, permissions, resolve_symbol, symbol_for, total_usd, verify)
 import web3bal  # noqa: E402
 from market import SNAPSHOT  # noqa: E402
 
@@ -116,6 +116,7 @@ class ConfigIn(BaseModel):
     max_order_usd: Optional[float] = Field(None, ge=0)
     daily_loss_limit: Optional[float] = Field(None, ge=0)
     manual_confirm: Optional[bool] = None
+    auto_fund: Optional[bool] = None
 
 
 @api.post("/bot/config")
@@ -277,10 +278,11 @@ async def exchange_capabilities(user=Depends(current_user)):
 
     async def run(ex):
         perms = await permissions(ex, creds["exchange"])
+        symbol = await resolve_symbol(ex, creds["exchange"])
         if perms:
             await db.exchange_credentials.update_one({"user_id": user["id"]}, {"$set": {"permissions": perms}})
         has = {k: bool(ex.has.get(k)) for k in ("createOrder", "fetchDepositAddress", "withdraw", "transfer", "fetchDeposits", "fetchWithdrawals")}
-        return {"exchange": creds["exchange"], "hostname": creds.get("hostname"), "symbol": symbol_for(creds["exchange"]),
+        return {"exchange": creds["exchange"], "hostname": creds.get("hostname"), "symbol": symbol,
                 "permissions": perms, "has": has, "accounts": ACCOUNTS.get(creds["exchange"]), "warnings": perm_warnings(perms)}
     return await with_exchange(user["id"], run)
 
@@ -307,21 +309,26 @@ class OrderIn(BaseModel):
 async def exchange_order(body: OrderIn, user=Depends(current_user)):
     creds = await get_creds(user["id"]) or bad("No exchange connected")
     bot = await get_bot(user)
-    symbol = symbol_for(creds["exchange"])
 
     async def run(ex):
-        await ex.load_markets()
+        symbol = await resolve_symbol(ex, creds["exchange"])
         price = (await ex.fetch_ticker(symbol))["last"]
         if body.side == "BUY":
-            o = await market_order(ex, symbol, "BUY", body.usd or engine.order_usd(bot), 0, price)
+            usd = body.usd or engine.order_usd(bot)
+            await engine.auto_fund(ex, user["id"], creds["exchange"], symbol, "BUY", usd, 0, bot.get("auto_fund", True))
+            o = await market_order(ex, symbol, "BUY", usd, 0, price)
         else:
+            if body.qty:
+                await engine.auto_fund(ex, user["id"], creds["exchange"], symbol, "SELL", 0, body.qty, bot.get("auto_fund", True))
+            elif bot.get("auto_fund", True):
+                await engine.auto_fund(ex, user["id"], creds["exchange"], symbol, "SELL", 0, float("inf"), True)
             qty = body.qty or float(((await ex.fetch_balance()).get("BTC") or {}).get("free") or 0)
             if qty <= 0:
                 bad("No BTC in the trading account to sell")
             o = await market_order(ex, symbol, "SELL", 0, qty, price)
-        return o, price
+        return o, price, symbol
 
-    o, price = await with_exchange(user["id"], run)
+    o, price, symbol = await with_exchange(user["id"], run)
     avg = float(o.get("average") or price)
     qty = float(o.get("filled") or 0) or (body.qty or (body.usd or engine.order_usd(bot)) / price)
     await engine.record_fill(bot, body.side, avg, round(qty, 8), f"LIVE FILLED #{o.get('id')}",
@@ -333,15 +340,16 @@ async def exchange_order(body: OrderIn, user=Depends(current_user)):
 @api.post("/exchange/test-order")
 async def exchange_test_order(user=Depends(current_user)):
     creds = await get_creds(user["id"]) or bad("No exchange connected")
-    symbol = symbol_for(creds["exchange"])
+    bot = await get_bot(user)
 
     async def run(ex):
-        await ex.load_markets()
+        symbol = await resolve_symbol(ex, creds["exchange"])
         m = ex.market(symbol)
         price = (await ex.fetch_ticker(symbol))["last"]
         lim = m.get("limits") or {}
         min_cost = max(float((lim.get("cost") or {}).get("min") or 0), float((lim.get("amount") or {}).get("min") or 0) * price, 5.0)
         usd = round(min_cost * 1.1, 2)
+        await engine.auto_fund(ex, user["id"], creds["exchange"], symbol, "BUY", usd, 0, bot.get("auto_fund", True))
         buy = await market_order(ex, symbol, "BUY", usd, 0, price)
         await asyncio.sleep(2)
         filled = float(buy.get("filled") or 0) or usd / price

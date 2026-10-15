@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import alerts
 import brokers
 from db import db, now_ms
-from exchange_service import all_balances, client_from_doc, friendly, market_order, symbol_for, total_usd
+from exchange_service import all_balances, client_from_doc, ensure_funds, friendly, market_order, resolve_symbol, total_usd
 from market import SNAPSHOT
 
 START_CASH = 10000.0
@@ -17,7 +17,7 @@ DEFAULT_BOT = {
     "status": "stopped", "mode": "live", "position_usd": 50.0, "max_order_usd": 0.0, "daily_loss_limit": 0.0,
     "manual_confirm": False, "kill_switch": False, "cash": START_CASH, "position_qty": 0.0, "entry_price": 0.0,
     "realized_pnl": 0.0, "trades_count": 0, "wins": 0, "losses": 0, "alerts_enabled": True, "live_equity": None,
-    "last_tick": 0, "pocketoption": None,
+    "last_tick": 0, "pocketoption": None, "auto_fund": True,
 }
 
 
@@ -121,6 +121,20 @@ async def check_daily_loss(bot: dict):
         await alerts.notify(bot, f"🛑 Kill switch tripped: daily loss {today:.2f}")
 
 
+async def auto_fund(ex, uid: str, exchange: str, symbol: str, side: str, usd: float, qty: float, enabled: bool = True):
+    if not enabled:
+        return
+    cur, need = (symbol.split("/")[1], usd) if side == "BUY" else ("BTC", qty)
+    try:
+        moved = await ensure_funds(ex, exchange, cur, need)
+    except Exception as e:
+        return await log(db, uid, {"action": "HOLD", "engine": "fund", "confidence": 1.0,
+                                   "reason": f"Auto-fund failed: {friendly(e)[:140]}"}, SNAPSHOT.get("price"), "REJECTED")
+    if moved:
+        await log(db, uid, {"action": "HOLD", "engine": "fund", "confidence": 1.0,
+                            "reason": f"Auto-fund: moved {moved} {cur} funding → trading"}, SNAPSHOT.get("price"), "TRANSFER")
+
+
 async def execute(bot: dict, d: dict):
     side, price = d["action"], SNAPSHOT["price"]
     if bot["mode"] != "live":
@@ -128,8 +142,10 @@ async def execute(bot: dict, d: dict):
         return await record_fill(bot, side, price, qty, "PAPER FILLED", d)
     creds = await get_creds(bot["user_id"])
     ex = client_from_doc(creds)
-    symbol = symbol_for(creds["exchange"])
     try:
+        symbol = await resolve_symbol(ex, creds["exchange"])
+        await auto_fund(ex, bot["user_id"], creds["exchange"], symbol, side, order_usd(bot), bot["position_qty"], bot.get("auto_fund", True))
+        price = (await ex.fetch_ticker(symbol))["last"] or price
         o = await market_order(ex, symbol, side, order_usd(bot), bot["position_qty"], price)
         avg = float(o.get("average") or price)
         qty = float(o.get("filled") or 0) or (order_usd(bot) / price if side == "BUY" else bot["position_qty"])

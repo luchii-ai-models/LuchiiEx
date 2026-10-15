@@ -102,6 +102,39 @@ async def all_balances(ex, exchange: str) -> dict:
     return out
 
 
+QUOTES = ("USDT", "USD", "USDC")
+
+
+async def resolve_symbol(ex, exchange: str) -> str:
+    await ex.load_markets()
+    avail = [q for q in QUOTES if f"BTC/{q}" in ex.markets]
+    if not avail:
+        return symbol_for(exchange)
+    try:
+        bal = await all_balances(ex, exchange)
+        best = max(avail, key=lambda q: sum(float(b.get(q) or 0) for b in bal.values()))
+        if any(float(b.get(best) or 0) for b in bal.values()):
+            return f"BTC/{best}"
+    except Exception:
+        pass
+    return f"BTC/{avail[0]}"
+
+
+async def ensure_funds(ex, exchange: str, currency: str, need: float) -> float:
+    acc = ACCOUNTS.get(exchange)
+    if not acc or need <= 0:
+        return 0.0
+    free = float(((await ex.fetch_balance()).get(currency) or {}).get("free") or 0)
+    if free >= need:
+        return 0.0
+    funding = float(((await ex.fetch_balance({"type": acc[0]})).get(currency) or {}).get("free") or 0)
+    if funding <= 0:
+        return 0.0
+    amount = float(ex.currency_to_precision(currency, funding)) if hasattr(ex, "currency_to_precision") else funding
+    await ex.transfer(currency, amount, acc[0], acc[1])
+    return amount
+
+
 def total_usd(balances: dict, price: float) -> float:
     tot = 0.0
     for b in balances.values():

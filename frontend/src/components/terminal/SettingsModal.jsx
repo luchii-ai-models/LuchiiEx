@@ -61,9 +61,10 @@ const PrimaryBtn = ({ children, ...p }) => (
 
 function ConfigTab({ bot, refresh, connected }) {
   const [posUsd, setPosUsd] = useState(bot?.position_usd ?? 50);
+  const [autoFund, setAutoFund] = useState(bot?.auto_fund ?? true);
 
   const save = async () => {
-    try { await api.post("/bot/config", { position_usd: Number(posUsd) }); toast.success("Config saved"); refresh(); }
+    try { await api.post("/bot/config", { position_usd: Number(posUsd), auto_fund: autoFund }); toast.success("Config saved"); refresh(); }
     catch (e) { toast.error(formatApiErrorDetail(e.response?.data?.detail)); }
   };
   return (
@@ -72,6 +73,14 @@ function ConfigTab({ bot, refresh, connected }) {
       <div>
         <Label>POSITION SIZE (USD PER TRADE)</Label>
         <Input data-testid="position-size-input" type="number" min="1" value={posUsd} onChange={(e) => setPosUsd(e.target.value)} />
+      </div>
+      <div>
+        <Label>AUTO-FUND FROM FUNDING ACCOUNT</Label>
+        <button data-testid="auto-fund-toggle" onClick={() => setAutoFund(!autoFund)}
+          className={`w-full py-2 text-xs tracking-[0.15em] border transition-colors ${autoFund ? "border-neon-green text-neon-green bg-neon-green/10" : "border-term-border text-term-muted"}`}>
+          {autoFund ? "ON · MOVE DEPOSITS TO TRADING BEFORE EACH TRADE" : "OFF"}
+        </button>
+        <p className="text-[9px] text-term-muted mt-1">On OKX, Binance, Bybit, KuCoin, Bitget, Gate and MEXC, deposits land in the funding account. With this on, the bot moves them to trading before each order.</p>
       </div>
       <PrimaryBtn data-testid="save-config-button" onClick={save}>SAVE CONFIG</PrimaryBtn>
     </div>
