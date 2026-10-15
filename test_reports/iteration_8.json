@@ -1,0 +1,36 @@
+{
+  "summary": "Iter 8 (exit-rule whipsaw fix, win_rate, Solana Fund Wallet Guide). Backend: new tests/test_iteration8_exit_rules.py 11/11 pass, and the iteration 6+7 regression suites pass (46/46 total, -n 0). engine.signal() was tested with a synthetic SNAPSHOT (40 candles falling or rising): (a) losing -0.3% with SMA7<SMA25 -> SELL 'cutting early'; losing with SMA7>SMA25 -> HOLD 'in position'; (b) winning +0.3% with SMA7<SMA25 -> HOLD 'winner rides' (no sell); RSI 80 while winning -> HOLD (RSI>75 no longer exits); (c) entry 2% above -> SELL 'STOP LOSS'; (d) +1.6% with tp_taken False and partial_tp True -> SELL partial 'PARTIAL TAKE PROFIT'; (e) tp_taken True, peak 2% above, trailing on -> SELL 'TRAILING STOP'. win_rate checked through the API: 0 with no trades, 2/5 -> 40, 2/3 -> 67. /api/bot/config still saves take_profit_pct, stop_loss_pct, trailing_stop, partial_tp, trend_filter and volume_filter. Frontend (fresh user with an imported generated wallet, 1920 and 390): solana-fund-guide is present; the toggle shows a QR <svg>; solana-fund-address equals the full pubkey and matches the short solana-pubkey; copy shows the 'Address copied' toast; SAINDRA and Dacity cards are present; no horizontal overflow (scrollWidth equals innerWidth at both sizes); the WIN RATE card shows '0%'; the footer text matches exactly. Admin login works through the API. The admin bot and real users' bots were not touched.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "engine.signal TP check", "issue": "Floating-point edge: when the price is exactly +tp% above entry, move can be 1.49999 and fail `move >= tp`, so TP fires one tick late. This is harmless in practice. A small epsilon (move >= tp - 1e-9) would fix it."},
+      {"endpoint": "engine.signal (design note)", "issue": "Losing positions are still cut on any SMA7<SMA25 cross, even at -0.01%. Fees/spread make each such cut a loss, so win_rate can still drift down in choppy markets. Consider a minimum loss threshold (e.g. move < -0.3%) before cutting early."},
+      {"endpoint": "record_fill", "issue": "pnl is rounded to 4 dp, but realized_pnl is still rounded to 2 dp. Tiny $1 trades add up to drift in REALIZED. The UI streak card shows +$0.00 for small gains."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Solana tab fund guide", "issues": ["The full address wraps onto 2 lines at both 1920 and 390. This is readable but the copy icon is the only easy way to use it. Fine as is."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iteration8_exit_rules.py", "/app/backend/tests/it8_setup_ui_user.py", "/app/test_reports/pytest/pytest_iter8.xml"],
+  "action_items": [
+    "Optional: add an epsilon to the TP comparison in engine.signal",
+    "Optional: add a minimum loss threshold before the SMA-cross early cut, to reduce fee-driven small losses",
+    "Optional: store realized_pnl with 4 dp to match the per-trade pnl precision"
+  ],
+  "critical_code_review_comments": [
+    "signal(): when trailing_stop is on and peak > entry, the hard STOP LOSS branch is skipped (elif). Downside is still covered because a drop from a peak above entry is at least the drop from entry, but the reason label then says TRAILING STOP instead of STOP LOSS",
+    "Lines 99-104: move is computed twice. A small refactor would help, not a bug",
+    "CancelledError tracebacks in backend.err.log are caused by uvicorn reloads when test files are written. Harmless"
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration8_exit_rules.py", "/app/backend/tests/it8_setup_ui_user.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin@gravia.io / Gravia@2026 (API login verified; admin bot not touched). Test users registered and deleted.",
+  "seed_data_creation": "None kept. Test users, bots and solana_wallets were deleted by user _id. 0 test_it8* users remain.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: cd /app/backend && set -a && . ../frontend/.env && . ./.env && set +a && pytest tests/test_iteration8_exit_rules.py tests/test_iteration6_solana_risk.py tests/test_iteration7_token_tpsl.py -n 0. The signal tests monkeypatch market.SNAPSHOT in-process (no network). For UI tests: python tests/it8_setup_ui_user.py create (prints email/pubkey; password TestPass123!), then python tests/it8_setup_ui_user.py cleanup <email>. The settings tab is chosen with select [data-testid=settings-tab-select] value 'solana'."
+}

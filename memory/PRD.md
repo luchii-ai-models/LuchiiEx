@@ -53,6 +53,12 @@ User choices: copy from trade-bridge-73; use the env values exactly; no Emergent
 - Partial take profit (`partial_tp`, default on, toggle in CONFIG and SOLANA DEX): first TP hit sells half (BTC: falls back to full sell if half < exchange minimum; `tp_taken` flag prevents repeat), remainder rides the trailing stop. Solana positions keep raw/tp_taken after the half sell; card shows "½ TAKEN".
 - Verified via signal unit checks, config round-trips, default-token import, simulated watcher position; 35/35 regression.
 
+## Implemented (2026-10-15, iteration 10 — exit-rule fix + Fund Wallet Guide)
+- Root cause of "40% win rate / no gains": the in-position exit rule (SELL on SMA7<SMA25 or RSI>75) closed $1 trades on tiny reversals before TP/trailing could act (2W/3L, net ≈ 0 after fees). Fix: SMA cross exit only cuts losers beyond −0.3%; winners HOLD and ride partial TP / trailing stop; RSI>75 no longer exits. TP comparison has epsilon; pnl/realized_pnl kept at 4 dp.
+- SOLANA DEX tab: "FUND THIS WALLET" guide with QR (solana:<pubkey>), full address, copy button, network warning.
+- iteration_8 report: 11 new + 35 regression tests pass, frontend flows pass at 1920/390.
+- Honest note: win rate depends on the market; with $1 positions exchange fees (~0.1%/side) dominate — larger position size needed for meaningful gains.
+
 ## Known limits
 - Live order placement has not been tested with real keys
 - Some exchanges reject fake secrets with a decode error before the auth call; this is still shown as "Exchange verification failed: …"

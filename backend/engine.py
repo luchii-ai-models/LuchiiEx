@@ -74,7 +74,7 @@ def signal(bot: dict) -> dict:
     tp, sl = float(bot.get("take_profit_pct") or 0), float(bot.get("stop_loss_pct") or 0)
     if not flat and bot.get("entry_price"):
         move = (price - bot["entry_price"]) / bot["entry_price"] * 100
-        if tp and move >= tp and not bot.get("tp_taken"):
+        if tp and move >= tp - 1e-9 and not bot.get("tp_taken"):
             if bot.get("partial_tp", True):
                 return {"action": "SELL", "partial": True, "confidence": 0.95, "reason": f"PARTIAL TAKE PROFIT {move:+.2f}% (target +{tp}%) · selling half, rest rides trailing stop · RSI {r}"}
             return {"action": "SELL", "confidence": 0.95, "reason": f"TAKE PROFIT hit {move:+.2f}% (target +{tp}%) · RSI {r}"}
@@ -98,7 +98,7 @@ def signal(bot: dict) -> dict:
         return {"action": "BUY", "confidence": conf, "reason": f"SMA7>SMA25 ({trend:+.3f}%) · RSI {r} · trend+volume confirmed"}
     if not flat and bot.get("entry_price"):
         move = (price - bot["entry_price"]) / bot["entry_price"] * 100
-        if s7 < s25 and move < 0:
+        if s7 < s25 and move < -0.3:
             return {"action": "SELL", "confidence": conf, "reason": f"SMA7<SMA25 while losing {move:+.2f}% · cutting early · RSI {r}"}
     if not flat and (s7 < s25 or r > 75):
         return {"action": "HOLD", "confidence": conf, "reason": f"in position {((price - bot['entry_price']) / bot['entry_price'] * 100) if bot.get('entry_price') else 0:+.2f}% · winner rides TP/trailing stop · RSI {r}"}
@@ -126,12 +126,12 @@ async def record_fill(bot: dict, side: str, price: float, qty: float, fill: str,
             upd["cash"] = bot["cash"] - qty * price
     elif d.get("partial"):
         pnl = round((price - bot["entry_price"]) * qty, 4)
-        upd.update(position_qty=round(max(bot["position_qty"] - qty, 0), 8), tp_taken=True, realized_pnl=round(bot["realized_pnl"] + pnl, 2))
+        upd.update(position_qty=round(max(bot["position_qty"] - qty, 0), 8), tp_taken=True, realized_pnl=round(bot["realized_pnl"] + pnl, 4))
         if bot["mode"] != "live":
             upd["cash"] = bot["cash"] + qty * price
     else:
         pnl = round((price - bot["entry_price"]) * qty, 4)
-        upd.update(position_qty=0.0, entry_price=0.0, peak_price=0.0, tp_taken=False, realized_pnl=round(bot["realized_pnl"] + pnl, 2),
+        upd.update(position_qty=0.0, entry_price=0.0, peak_price=0.0, tp_taken=False, realized_pnl=round(bot["realized_pnl"] + pnl, 4),
                    wins=bot["wins"] + (pnl > 0), losses=bot["losses"] + (pnl <= 0))
         if bot["mode"] != "live":
             upd["cash"] = bot["cash"] + qty * price
