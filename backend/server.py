@@ -124,6 +124,9 @@ class ConfigIn(BaseModel):
     volume_filter: Optional[bool] = None
     trailing_stop: Optional[bool] = None
     partial_tp: Optional[bool] = None
+    aggressive: Optional[bool] = None
+    size_pct: Optional[float] = Field(None, ge=0, le=100)
+    assets: Optional[list[Literal["BTC", "ETH", "SOL"]]] = Field(None, min_length=1)
 
 
 @api.post("/bot/config")
@@ -146,7 +149,7 @@ async def bot_start(user=Depends(current_user)):
         bad("Live mode needs a connected exchange")
     await set_bot(user["id"], status="running")
     await engine.log(db, user["id"], {"action": "HOLD", "engine": "system", "confidence": 1.0,
-                                      "reason": f"engine engaged · {bot['mode'].upper()} · ${engine.order_usd(bot)} per trade"}, SNAPSHOT.get("price"))
+                                      "reason": f"engine engaged · {bot['mode'].upper()} · {', '.join(bot.get('assets') or ['BTC'])} · {str(bot.get('size_pct') or 0) + '% of balance' if bot.get('size_pct') else '$' + str(engine.order_usd(bot))} per trade · {'AGGRESSIVE' if bot.get('aggressive', True) else 'STANDARD'}"}, SNAPSHOT.get("price"))
     await alerts.notify(bot, "▶ Luchii engine engaged")
     return {"ok": True}
 
@@ -180,7 +183,7 @@ async def bot_reset(user=Depends(current_user)):
     bot = await get_bot(user)
     start = bot.get("live_equity") or None
     await set_bot(user["id"], status="stopped", kill_switch=False, pending=None, cash=engine.START_CASH, position_qty=0.0,
-                  start_equity=start, start_ts=now_ms() if start else None,
+                  start_equity=start, start_ts=now_ms() if start else None, alt_positions={}, peak_price=0.0, tp_taken=False,
                   entry_price=0.0, realized_pnl=0.0, trades_count=0, wins=0, losses=0)
     for c in (db.bot_logs, db.bot_trades, db.bot_pnl):
         await c.delete_many({"user_id": user["id"]})
@@ -219,7 +222,7 @@ async def pending_approve(user=Depends(current_user)):
     p = bot.get("pending") or bad("Nothing pending")
     await set_bot(user["id"], pending=None)
     bot["pending"] = None
-    await engine.execute(bot, {**p["decision"], "engine": "manual"})
+    await engine.execute(bot, {**p["decision"], "engine": "manual"}, p.get("asset", "BTC"))
     return {"ok": True}
 
 
@@ -883,3 +886,6 @@ async def startup():
     asyncio.create_task(market.loop())
     asyncio.create_task(engine.scheduler())
     asyncio.create_task(solana_dex.watcher())
+    if not await db.meta.find_one({"_id": "boost_v1"}):
+        await db.bots.update_many({}, {"$set": engine.BOOST_DEFAULTS})
+        await db.meta.insert_one({"_id": "boost_v1", "ts": now_ms()})

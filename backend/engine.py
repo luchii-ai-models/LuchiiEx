@@ -18,9 +18,10 @@ DEFAULT_BOT = {
     "manual_confirm": False, "kill_switch": False, "cash": START_CASH, "position_qty": 0.0, "entry_price": 0.0,
     "realized_pnl": 0.0, "trades_count": 0, "wins": 0, "losses": 0, "alerts_enabled": True, "live_equity": None,
     "last_tick": 0, "pocketoption": None, "auto_fund": True, "start_equity": None, "start_ts": None,
-    "take_profit_pct": 1.5, "stop_loss_pct": 1.0, "trend_filter": True, "volume_filter": True, "trailing_stop": True, "peak_price": 0.0,
-    "partial_tp": True, "tp_taken": False,
+    "take_profit_pct": 0.6, "stop_loss_pct": 0.4, "trend_filter": True, "volume_filter": True, "trailing_stop": True, "peak_price": 0.0,
+    "partial_tp": True, "tp_taken": False, "aggressive": True, "size_pct": 50.0, "assets": ["BTC", "ETH", "SOL"], "alt_positions": {},
 }
+BOOST_DEFAULTS = {"take_profit_pct": 0.6, "stop_loss_pct": 0.4, "aggressive": True, "size_pct": 50.0, "assets": ["BTC", "ETH", "SOL"]}
 
 
 async def get_creds(uid: str):
@@ -43,10 +44,31 @@ async def with_exchange(uid: str, fn):
         await ex.close()
 
 
+def pos_of(bot: dict, asset: str) -> dict:
+    if asset == "BTC":
+        return {k: bot.get(k) or (False if k == "tp_taken" else 0.0) for k in ("position_qty", "entry_price", "peak_price", "tp_taken")}
+    p = (bot.get("alt_positions") or {}).get(asset) or {}
+    return {"position_qty": float(p.get("qty") or 0), "entry_price": float(p.get("entry") or 0),
+            "peak_price": float(p.get("peak") or 0), "tp_taken": bool(p.get("tp_taken"))}
+
+
+def pos_fields(asset: str, qty=None, entry=None, peak=None, tp_taken=None) -> dict:
+    vals = {"qty": qty, "entry": entry, "peak": peak, "tp_taken": tp_taken}
+    if asset == "BTC":
+        names = {"qty": "position_qty", "entry": "entry_price", "peak": "peak_price", "tp_taken": "tp_taken"}
+        return {names[k]: v for k, v in vals.items() if v is not None}
+    return {f"alt_positions.{asset}.{k}": v for k, v in vals.items() if v is not None}
+
+
+def mkt(asset: str) -> dict:
+    return (SNAPSHOT.get("markets") or {}).get(asset) or {"price": SNAPSHOT.get("price"), "candles": SNAPSHOT.get("candles"), "rsi": SNAPSHOT.get("rsi")}
+
+
 def equity(bot: dict) -> float:
     if bot["mode"] == "live":
         return bot.get("live_equity") or 0.0
-    return round(bot["cash"] + bot["position_qty"] * (SNAPSHOT.get("price") or 0), 2)
+    alts = sum(pos_of(bot, a)["position_qty"] * (mkt(a).get("price") or 0) for a in (bot.get("alt_positions") or {}))
+    return round(bot["cash"] + bot["position_qty"] * (SNAPSHOT.get("price") or 0) + alts, 2)
 
 
 async def log(db_, uid, d, price, fill=None):
@@ -61,52 +83,60 @@ def _sma(xs, n):
     return sum(xs[-n:]) / n if len(xs) >= n else None
 
 
-def signal(bot: dict) -> dict:
-    candles = SNAPSHOT.get("candles") or []
+def signal(bot: dict, asset: str = "BTC") -> dict:
+    m = mkt(asset)
+    candles = m.get("candles") or []
     closes = [c["c"] for c in candles]
-    price = SNAPSHOT.get("price") or (closes[-1] if closes else 0)
-    s7, s25, r = _sma(closes, 7), _sma(closes, 25), SNAPSHOT.get("rsi")
+    price = m.get("price") or (closes[-1] if closes else 0)
+    agg = bot.get("aggressive", True)
+    nf, ns, rsi_cap = (5, 13, 80) if agg else (7, 25, 70)
+    s7, s25, r = _sma(closes, nf), _sma(closes, ns), m.get("rsi")
     if s7 is None or s25 is None or r is None or len(candles) < 30:
-        return {"action": "HOLD", "confidence": 0.3, "reason": "warming up market data"}
+        return {"action": "HOLD", "confidence": 0.3, "reason": f"[{asset}] warming up market data"}
     trend = (s7 - s25) / s25 * 100
     conf = min(0.95, 0.5 + abs(trend) * 5)
-    flat = bot["position_qty"] <= 0
+    pos = pos_of(bot, asset)
+    flat = pos["position_qty"] <= 0
+    tag = f"SMA{nf}/{ns}"
     tp, sl = float(bot.get("take_profit_pct") or 0), float(bot.get("stop_loss_pct") or 0)
-    if not flat and bot.get("entry_price"):
-        move = (price - bot["entry_price"]) / bot["entry_price"] * 100
-        if tp and move >= tp - 1e-9 and not bot.get("tp_taken"):
+    if not flat and pos["entry_price"]:
+        move = (price - pos["entry_price"]) / pos["entry_price"] * 100
+        if tp and move >= tp - 1e-9 and not pos["tp_taken"]:
             if bot.get("partial_tp", True):
-                return {"action": "SELL", "partial": True, "confidence": 0.95, "reason": f"PARTIAL TAKE PROFIT {move:+.2f}% (target +{tp}%) · selling half, rest rides trailing stop · RSI {r}"}
-            return {"action": "SELL", "confidence": 0.95, "reason": f"TAKE PROFIT hit {move:+.2f}% (target +{tp}%) · RSI {r}"}
-        peak = max(float(bot.get("peak_price") or 0), bot["entry_price"])
-        if sl and bot.get("trailing_stop", True) and peak > bot["entry_price"]:
+                return {"action": "SELL", "partial": True, "confidence": 0.95, "reason": f"[{asset}] PARTIAL TAKE PROFIT {move:+.2f}% (target +{tp}%) · selling half, rest rides trailing stop · RSI {r}"}
+            return {"action": "SELL", "confidence": 0.95, "reason": f"[{asset}] TAKE PROFIT hit {move:+.2f}% (target +{tp}%) · RSI {r}"}
+        peak = max(float(pos["peak_price"] or 0), pos["entry_price"])
+        if sl and bot.get("trailing_stop", True) and peak > pos["entry_price"]:
             drop = (price - peak) / peak * 100
             if drop <= -sl:
-                return {"action": "SELL", "confidence": 0.95, "reason": f"TRAILING STOP hit {drop:+.2f}% from peak ${peak:,.0f} (locked {move:+.2f}%) · RSI {r}"}
+                return {"action": "SELL", "confidence": 0.95, "reason": f"[{asset}] TRAILING STOP hit {drop:+.2f}% from peak ${peak:,.2f} (locked {move:+.2f}%) · RSI {r}"}
         elif sl and move <= -sl:
-            return {"action": "SELL", "confidence": 0.95, "reason": f"STOP LOSS hit {move:+.2f}% (limit -{sl}%) · RSI {r}"}
-    if flat and s7 > s25 and r < 70:
+            return {"action": "SELL", "confidence": 0.95, "reason": f"[{asset}] STOP LOSS hit {move:+.2f}% (limit -{sl}%) · RSI {r}"}
+    if flat and s7 > s25 and r < rsi_cap:
         if bot.get("trend_filter", True):
-            s25_prev = _sma(closes[:-5], 25)
-            if price < s25 or (s25_prev and s25 <= s25_prev):
-                return {"action": "HOLD", "confidence": conf, "reason": f"trend filter · price below/flat SMA25 · trend {trend:+.3f}% · RSI {r}"}
-        if bot.get("volume_filter", True):
+            s25_prev = _sma(closes[:-5], ns)
+            if price < s25 or (not agg and s25_prev and s25 <= s25_prev):
+                return {"action": "HOLD", "confidence": conf, "reason": f"[{asset}] trend filter · price below/flat SMA{ns} · trend {trend:+.3f}% · RSI {r}"}
+        if bot.get("volume_filter", True) and not agg:
             vols = [c["v"] for c in candles[-21:-1]]
             avg_v = sum(vols) / len(vols) if vols else 0
             if avg_v and candles[-2]["v"] < avg_v:
-                return {"action": "HOLD", "confidence": conf, "reason": f"volume filter · last vol {candles[-2]['v']:.2f} < avg {avg_v:.2f} · RSI {r}"}
-        return {"action": "BUY", "confidence": conf, "reason": f"SMA7>SMA25 ({trend:+.3f}%) · RSI {r} · trend+volume confirmed"}
-    if not flat and bot.get("entry_price"):
-        move = (price - bot["entry_price"]) / bot["entry_price"] * 100
+                return {"action": "HOLD", "confidence": conf, "reason": f"[{asset}] volume filter · last vol {candles[-2]['v']:.2f} < avg {avg_v:.2f} · RSI {r}"}
+        return {"action": "BUY", "confidence": conf, "reason": f"[{asset}] {tag} cross up ({trend:+.3f}%) · RSI {r}{' · AGGRESSIVE' if agg else ' · trend+volume confirmed'}"}
+    if not flat and pos["entry_price"]:
+        move = (price - pos["entry_price"]) / pos["entry_price"] * 100
         if s7 < s25 and move < -0.3:
-            return {"action": "SELL", "confidence": conf, "reason": f"SMA7<SMA25 while losing {move:+.2f}% · cutting early · RSI {r}"}
-    if not flat and (s7 < s25 or r > 75):
-        return {"action": "HOLD", "confidence": conf, "reason": f"in position {((price - bot['entry_price']) / bot['entry_price'] * 100) if bot.get('entry_price') else 0:+.2f}% · winner rides TP/trailing stop · RSI {r}"}
-    return {"action": "HOLD", "confidence": conf, "reason": f"{'in position' if not flat else 'no entry'} · trend {trend:+.3f}% · RSI {r}"}
+            return {"action": "SELL", "confidence": conf, "reason": f"[{asset}] {tag} cross down while losing {move:+.2f}% · cutting early · RSI {r}"}
+        if s7 < s25 or r > 75:
+            return {"action": "HOLD", "confidence": conf, "reason": f"[{asset}] in position {move:+.2f}% · winner rides TP/trailing stop · RSI {r}"}
+    return {"action": "HOLD", "confidence": conf, "reason": f"[{asset}] {'in position' if not flat else 'no entry'} · trend {trend:+.3f}% · RSI {r}"}
 
 
-def order_usd(bot: dict) -> float:
+def order_usd(bot: dict, have: float = None) -> float:
     usd = float(bot["position_usd"])
+    pct = float(bot.get("size_pct") or 0)
+    if pct > 0 and have is not None:
+        usd = round(have * pct / 100, 2)
     if bot.get("max_order_usd"):
         usd = min(usd, float(bot["max_order_usd"]))
     return usd
@@ -116,31 +146,32 @@ async def set_bot(uid: str, **fields):
     await db.bots.update_one({"user_id": uid}, {"$set": fields})
 
 
-async def record_fill(bot: dict, side: str, price: float, qty: float, fill: str, d: dict):
+async def record_fill(bot: dict, side: str, price: float, qty: float, fill: str, d: dict, asset: str = "BTC"):
     uid = bot["user_id"]
+    pos = pos_of(bot, asset)
     pnl = 0.0
     upd = {"trades_count": bot["trades_count"] + 1}
     if side == "BUY":
-        upd.update(position_qty=qty, entry_price=price, peak_price=price, tp_taken=False)
+        upd.update(pos_fields(asset, qty=qty, entry=price, peak=price, tp_taken=False))
         if bot["mode"] != "live":
             upd["cash"] = bot["cash"] - qty * price
     elif d.get("partial"):
-        pnl = round((price - bot["entry_price"]) * qty, 4)
-        upd.update(position_qty=round(max(bot["position_qty"] - qty, 0), 8), tp_taken=True, realized_pnl=round(bot["realized_pnl"] + pnl, 4))
+        pnl = round((price - pos["entry_price"]) * qty, 4)
+        upd.update(pos_fields(asset, qty=round(max(pos["position_qty"] - qty, 0), 8), tp_taken=True), realized_pnl=round(bot["realized_pnl"] + pnl, 4))
         if bot["mode"] != "live":
             upd["cash"] = bot["cash"] + qty * price
     else:
-        pnl = round((price - bot["entry_price"]) * qty, 4)
-        upd.update(position_qty=0.0, entry_price=0.0, peak_price=0.0, tp_taken=False, realized_pnl=round(bot["realized_pnl"] + pnl, 4),
+        pnl = round((price - pos["entry_price"]) * qty, 4)
+        upd.update(pos_fields(asset, qty=0.0, entry=0.0, peak=0.0, tp_taken=False), realized_pnl=round(bot["realized_pnl"] + pnl, 4),
                    wins=bot["wins"] + (pnl > 0), losses=bot["losses"] + (pnl <= 0))
         if bot["mode"] != "live":
             upd["cash"] = bot["cash"] + qty * price
     await set_bot(uid, **upd)
-    await db.bot_trades.insert_one({"user_id": uid, "ts": now_ms(), "side": side, "price": price, "qty": qty, "pnl": pnl})
+    await db.bot_trades.insert_one({"user_id": uid, "ts": now_ms(), "side": side, "asset": asset, "price": price, "qty": qty, "pnl": pnl})
     await log(db, uid, d, price, fill)
-    await alerts.notify(bot, f"{'🟢' if side == 'BUY' else '🔴'} {side} {qty} BTC @ ${price:,.2f}" + (f" · P&L {pnl:+.2f}" if side == "SELL" else ""))
+    await alerts.notify(bot, f"{'🟢' if side == 'BUY' else '🔴'} {side} {qty} {asset} @ ${price:,.2f}" + (f" · P&L {pnl:+.2f}" if side == "SELL" else ""))
     bot = await db.bots.find_one({"user_id": uid})
-    if not d.get("partial"):
+    if not d.get("partial") and asset == "BTC":
         asyncio.create_task(mirror_all(db, bot, side))
     await check_daily_loss(bot)
 
@@ -161,7 +192,7 @@ async def check_daily_loss(bot: dict):
 async def auto_fund(ex, uid: str, exchange: str, symbol: str, side: str, usd: float, qty: float, enabled: bool = True):
     if not enabled:
         return
-    cur, need = (symbol.split("/")[1], usd) if side == "BUY" else ("BTC", qty)
+    cur, need = (symbol.split("/")[1], usd) if side == "BUY" else (symbol.split("/")[0], qty)
     try:
         moved = await ensure_funds(ex, exchange, cur, need)
     except Exception as e:
@@ -183,40 +214,47 @@ async def free_of(ex, cur: str) -> float:
     return float(((await ex.fetch_balance()).get(cur) or {}).get("free") or 0)
 
 
-async def execute(bot: dict, d: dict):
-    side, price = d["action"], SNAPSHOT["price"]
+async def execute(bot: dict, d: dict, asset: str = "BTC"):
+    side, price = d["action"], mkt(asset).get("price") or SNAPSHOT["price"]
+    pos = pos_of(bot, asset)
     if bot["mode"] != "live":
-        qty = round(order_usd(bot) / price, 6) if side == "BUY" else bot["position_qty"] * (0.5 if d.get("partial") else 1)
-        return await record_fill(bot, side, price, qty, "PAPER FILLED", d)
+        qty = round(order_usd(bot, bot["cash"]) / price, 6) if side == "BUY" else pos["position_qty"] * (0.5 if d.get("partial") else 1)
+        return await record_fill(bot, side, price, qty, "PAPER FILLED", d, asset)
     uid = bot["user_id"]
     creds = await get_creds(uid)
     ex = client_from_doc(creds)
     try:
-        symbol = await resolve_symbol(ex, creds["exchange"])
+        symbol = await resolve_symbol(ex, creds["exchange"], asset)
         quote = symbol.split("/")[1]
-        usd = order_usd(bot)
-        await auto_fund(ex, uid, creds["exchange"], symbol, side, usd, bot["position_qty"], bot.get("auto_fund", True))
-        price = (await ex.fetch_ticker(symbol))["last"] or price
-        min_qty = float(((ex.market(symbol).get("limits") or {}).get("amount") or {}).get("min") or 0)
         if side == "BUY":
+            await auto_fund(ex, uid, creds["exchange"], symbol, side, order_usd(bot), 0, bot.get("auto_fund", True))
             have = await free_of(ex, quote)
-            if have < usd:
-                return await wait_log(uid, bot, f"BUY signal skipped · need {usd} {quote} in trading, have {round(have, 4)}. Deposit {quote}/USDC, or hold BTC so the bot can trade it on SELL signals.")
-            if usd / price < min_qty:
-                return await wait_log(uid, bot, f"BUY signal skipped · ${usd} is below the {symbol} minimum ({min_qty} BTC ≈ ${round(min_qty * price, 2)}). Raise POSITION SIZE.")
+            usd = order_usd(bot, have)
+        else:
+            usd = 0
+            await auto_fund(ex, uid, creds["exchange"], symbol, side, 0, pos["position_qty"], bot.get("auto_fund", True))
+        price = (await ex.fetch_ticker(symbol))["last"] or price
+        lim = ex.market(symbol).get("limits") or {}
+        min_qty = float((lim.get("amount") or {}).get("min") or 0)
+        min_cost = float((lim.get("cost") or {}).get("min") or 0)
+        if side == "BUY":
+            if have < usd or usd <= 0:
+                return await wait_log(uid, bot, f"[{asset}] BUY signal skipped · need {usd} {quote} in trading, have {round(have, 4)}. Deposit {quote}/USDC.")
+            if usd / price < min_qty or usd < min_cost:
+                return await wait_log(uid, bot, f"[{asset}] BUY signal skipped · ${usd} is below the {symbol} minimum (≈ ${round(max(min_qty * price, min_cost), 2)}). Raise POSITION SIZE / % or deposit more.")
             o = await market_order(ex, symbol, "BUY", usd, 0, price)
             qty = float(o.get("filled") or 0) or usd / price
         else:
-            want = bot["position_qty"] * (0.5 if d.get("partial") else 1)
-            qty = min(want, await free_of(ex, "BTC"))
-            if d.get("partial") and qty < min_qty:
+            want = pos["position_qty"] * (0.5 if d.get("partial") else 1)
+            qty = min(want, await free_of(ex, asset))
+            if d.get("partial") and (qty < min_qty or qty * price < min_cost):
                 d = {**d, "partial": False, "reason": d["reason"].replace("PARTIAL TAKE PROFIT", "TAKE PROFIT (half below exchange minimum, selling all)")}
-                qty = min(bot["position_qty"], await free_of(ex, "BTC"))
+                qty = min(pos["position_qty"], await free_of(ex, asset))
             if qty < max(min_qty, 1e-8):
-                return await wait_log(uid, bot, f"SELL signal skipped · only {qty} BTC free in trading (minimum {min_qty}). Waiting for deposit to credit.")
+                return await wait_log(uid, bot, f"[{asset}] SELL signal skipped · only {qty} {asset} free in trading (minimum {min_qty}).")
             o = await market_order(ex, symbol, "SELL", 0, qty, price)
             qty = float(o.get("filled") or 0) or qty
-        await record_fill(bot, side, float(o.get("average") or price), round(qty, 8), f"LIVE FILLED #{o.get('id')}", d)
+        await record_fill(bot, side, float(o.get("average") or price), round(qty, 8), f"LIVE FILLED #{o.get('id')}", d, asset)
     except Exception as e:
         await log(db, uid, {**d, "reason": f"{d['reason']} · order error: {friendly(e)[:160]}"}, price, "REJECTED")
     finally:
@@ -224,15 +262,19 @@ async def execute(bot: dict, d: dict):
 
 
 async def sync_position(bot: dict, bal: dict):
-    price = SNAPSHOT.get("price") or 0
-    btc = sum(float(b.get("BTC") or 0) for b in bal.values())
     uid = bot["user_id"]
-    if bot.get("position_qty", 0) <= 0 and btc >= 1e-5:
-        await set_bot(uid, position_qty=round(btc, 8), entry_price=price, peak_price=price)
-        await log(db, uid, {"action": "HOLD", "engine": "sync", "confidence": 1.0,
-                            "reason": f"Synced position: {round(btc, 8)} BTC on exchange · entry set to ${price:,.2f} (P&L counted from now)"}, price, "SYNCED")
-    elif bot.get("position_qty", 0) > 0 and btc < bot["position_qty"] * 0.5:
-        await set_bot(uid, position_qty=round(btc, 8) if btc >= 1e-5 else 0.0, entry_price=bot["entry_price"] if btc >= 1e-5 else 0.0)
+    for asset in bot.get("assets") or ["BTC"]:
+        price = mkt(asset).get("price") or 0
+        held = sum(float(b.get(asset) or 0) for b in bal.values())
+        pos = pos_of(bot, asset)
+        dust = 1e-5 if asset == "BTC" else 1e-3
+        if pos["position_qty"] <= 0 and held >= dust and held * price >= 1:
+            await set_bot(uid, **pos_fields(asset, qty=round(held, 8), entry=price, peak=price, tp_taken=False))
+            await log(db, uid, {"action": "HOLD", "engine": "sync", "confidence": 1.0,
+                                "reason": f"[{asset}] Synced position: {round(held, 8)} {asset} on exchange · entry set to ${price:,.2f} (P&L counted from now)"}, price, "SYNCED")
+        elif pos["position_qty"] > 0 and held < pos["position_qty"] * 0.5:
+            gone = held < dust
+            await set_bot(uid, **pos_fields(asset, qty=0.0 if gone else round(held, 8), entry=0.0 if gone else pos["entry_price"]))
 
 
 async def refresh_live_equity(bot: dict):
@@ -265,21 +307,29 @@ async def tick_bot(bot: dict):
         bot = await db.bots.find_one({"user_id": uid})
     if bot.get("pending"):
         return
-    if bot["position_qty"] > 0 and SNAPSHOT["price"] > float(bot.get("peak_price") or 0):
-        bot["peak_price"] = SNAPSHOT["price"]
-        await set_bot(uid, peak_price=SNAPSHOT["price"])
-    d = signal(bot)
-    d["engine"] = "algo"
-    if d["action"] == "HOLD":
-        if time.time() - bot.get("last_hold_log", 0) >= 60:
-            await set_bot(uid, last_hold_log=time.time())
-            await log(db, uid, d, SNAPSHOT["price"])
-    elif bot["mode"] == "live" and bot.get("manual_confirm"):
-        await set_bot(uid, pending={"action": d["action"], "price": SNAPSHOT["price"], "size_usd": order_usd(bot),
-                                    "reason": d["reason"], "decision": d, "ts": now_ms()})
-        await alerts.notify(bot, f"⏳ Confirm {d['action']} BTC @ ${SNAPSHOT['price']:,.2f} in the terminal")
-    else:
-        await execute(bot, d)
+    for asset in bot.get("assets") or ["BTC"]:
+        price = mkt(asset).get("price")
+        if not price:
+            continue
+        pos = pos_of(bot, asset)
+        if pos["position_qty"] > 0 and price > float(pos["peak_price"] or 0):
+            await set_bot(uid, **pos_fields(asset, peak=price))
+            bot = await db.bots.find_one({"user_id": uid})
+        d = signal(bot, asset)
+        d["engine"] = "algo"
+        key = f"last_hold_log_{asset}"
+        if d["action"] == "HOLD":
+            if time.time() - bot.get(key, 0) >= 60:
+                await set_bot(uid, **{key: time.time()})
+                await log(db, uid, d, price)
+        elif bot["mode"] == "live" and bot.get("manual_confirm"):
+            await set_bot(uid, pending={"action": d["action"], "asset": asset, "price": price, "size_usd": order_usd(bot),
+                                        "reason": d["reason"], "decision": d, "ts": now_ms()})
+            await alerts.notify(bot, f"⏳ Confirm {d['action']} {asset} @ ${price:,.2f} in the terminal")
+            break
+        else:
+            await execute(bot, d, asset)
+            bot = await db.bots.find_one({"user_id": uid})
     bot = await db.bots.find_one({"user_id": uid})
     await db.bot_pnl.insert_one({"user_id": uid, "ts": now_ms(), "equity": equity(bot)})
 

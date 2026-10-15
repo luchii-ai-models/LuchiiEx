@@ -15,6 +15,7 @@ export default function BotStatusCard({ bot, refresh, highlightKill }) {
   const equity = bot.equity ?? 0;
   const pnl = bot.realized_pnl ?? 0;
   const inPos = (bot.position_qty ?? 0) > 0;
+  const alts = Object.entries(bot.alt_positions || {}).filter(([, p]) => (p?.qty ?? 0) > 0);
 
   const act = async (fn, ok) => {
     try { await fn(); toast.success(ok); refresh(); }
@@ -42,8 +43,13 @@ export default function BotStatusCard({ bot, refresh, highlightKill }) {
       </div>
 
       <div className="mt-2 flex items-center justify-between text-[10px] text-term-muted">
-        <span>POS: {inPos ? <span className="text-neon-green">{bot.position_qty} BTC @ ${bot.entry_price?.toFixed(0)}</span> : <span>FLAT</span>}</span>
-        <span>SIZE ${bot.position_usd}{bot.manual_confirm ? " · MC" : ""}</span>
+        <span data-testid="bot-positions">POS: {inPos || alts.length ? (
+          <span className="text-neon-green">
+            {inPos && `${bot.position_qty} BTC @ $${bot.entry_price?.toFixed(0)}`}
+            {alts.map(([a, p]) => ` · ${p.qty} ${a} @ $${Number(p.entry).toFixed(2)}`)}
+          </span>
+        ) : <span>FLAT</span>}</span>
+        <span>{bot.size_pct ? `${bot.size_pct}%/TRADE` : `SIZE $${bot.position_usd}`}{bot.manual_confirm ? " · MC" : ""}</span>
       </div>
 
       {bot.kill_switch && (

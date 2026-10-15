@@ -108,19 +108,21 @@ async def all_balances(ex, exchange: str) -> dict:
 QUOTES = ("USDT", "USD", "USDC")
 
 
-async def resolve_symbol(ex, exchange: str) -> str:
+async def resolve_symbol(ex, exchange: str, base: str = "BTC") -> str:
     await ex.load_markets()
-    avail = [q for q in QUOTES if f"BTC/{q}" in ex.markets]
+    avail = [q for q in QUOTES if f"{base}/{q}" in ex.markets]
     if not avail:
+        if base != "BTC":
+            raise ValueError(f"{base} is not tradable on this exchange")
         return symbol_for(exchange)
     try:
         bal = await all_balances(ex, exchange)
         best = max(avail, key=lambda q: sum(float(b.get(q) or 0) for b in bal.values()))
         if any(float(b.get(best) or 0) for b in bal.values()):
-            return f"BTC/{best}"
+            return f"{base}/{best}"
     except Exception:
         pass
-    return f"BTC/{avail[0]}"
+    return f"{base}/{avail[0]}"
 
 
 async def ensure_funds(ex, exchange: str, currency: str, need: float) -> float:
@@ -138,10 +140,17 @@ async def ensure_funds(ex, exchange: str, currency: str, need: float) -> float:
     return amount
 
 
+def asset_prices(price: float) -> dict:
+    from market import SNAPSHOT
+    m = SNAPSHOT.get("markets") or {}
+    return {"BTC": price or 0, "ETH": (m.get("ETH") or {}).get("price") or 0, "SOL": (m.get("SOL") or {}).get("price") or 0}
+
+
 def total_usd(balances: dict, price: float) -> float:
+    px = asset_prices(price)
     tot = 0.0
     for b in balances.values():
-        tot += sum(float(b.get(c) or 0) for c in ("USD", "USDT", "USDC")) + float(b.get("BTC") or 0) * (price or 0)
+        tot += sum(float(b.get(c) or 0) for c in ("USD", "USDT", "USDC")) + sum(float(b.get(a) or 0) * p for a, p in px.items())
     return round(tot, 2)
 
 
@@ -151,8 +160,9 @@ def nonzero_balances(bal: dict) -> dict:
 
 def equity_usd(bal: dict, price: float) -> float:
     t = bal.get("total") or {}
+    px = asset_prices(price)
     usd = sum(float(t.get(c) or 0) for c in ("USD", "USDT", "USDC"))
-    return round(usd + float(t.get("BTC") or 0) * (price or 0), 2)
+    return round(usd + sum(float(t.get(a) or 0) * p for a, p in px.items()), 2)
 
 
 async def market_order(ex, symbol: str, side: str, usd: float, qty: float, price: float) -> dict:

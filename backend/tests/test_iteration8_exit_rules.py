@@ -24,7 +24,7 @@ def falling():
     """Synthetic falling series -> SMA7 < SMA25"""
     old = dict(SNAPSHOT)
     closes = [100000 - i * 50 for i in range(40)]
-    SNAPSHOT.update(candles=_candles(closes), price=closes[-1], rsi=40.0)
+    SNAPSHOT.update(candles=_candles(closes), price=closes[-1], rsi=40.0, markets={"BTC": {"candles": _candles(closes), "price": closes[-1], "rsi": 40.0}})
     yield closes[-1]
     SNAPSHOT.clear(); SNAPSHOT.update(old)
 
@@ -34,13 +34,13 @@ def rising():
     """Synthetic rising series -> SMA7 > SMA25, RSI high"""
     old = dict(SNAPSHOT)
     closes = [90000 + i * 50 for i in range(40)]
-    SNAPSHOT.update(candles=_candles(closes), price=closes[-1], rsi=80.0)
+    SNAPSHOT.update(candles=_candles(closes), price=closes[-1], rsi=80.0, markets={"BTC": {"candles": _candles(closes), "price": closes[-1], "rsi": 80.0}})
     yield closes[-1]
     SNAPSHOT.clear(); SNAPSHOT.update(old)
 
 
 def bot(**kw):
-    b = {**engine.DEFAULT_BOT, "position_qty": 0.001}
+    b = {**engine.DEFAULT_BOT, "position_qty": 0.001, "take_profit_pct": 1.5, "stop_loss_pct": 1.0, "aggressive": False}
     b.update(kw)
     return b
 

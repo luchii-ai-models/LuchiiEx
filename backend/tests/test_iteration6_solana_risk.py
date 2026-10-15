@@ -53,7 +53,7 @@ class TestRiskConfig:
 
     def test_defaults_for_fresh_user(self, users):
         s = requests.get(f"{API}/bot/state", headers=users[2], timeout=30).json()
-        assert s["take_profit_pct"] == 1.5 and s["stop_loss_pct"] == 1.0
+        assert s["take_profit_pct"] == 0.6 and s["stop_loss_pct"] == 0.4 and s["aggressive"] is True and s["size_pct"] == 50
         assert s["trend_filter"] is True and s["volume_filter"] is True
 
     @pytest.mark.parametrize("body", [{"take_profit_pct": 101}, {"take_profit_pct": -1}, {"stop_loss_pct": -0.5},
@@ -164,7 +164,7 @@ class TestSignal:
 
     def _bot(self, **kw):
         b = {"position_qty": 0.0, "entry_price": 0.0, "take_profit_pct": 1.5, "stop_loss_pct": 1.0,
-             "trend_filter": True, "volume_filter": True}
+             "trend_filter": True, "volume_filter": True, "aggressive": False}
         b.update(kw)
         return b
 

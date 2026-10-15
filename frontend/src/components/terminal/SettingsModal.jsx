@@ -78,10 +78,14 @@ function ConfigTab({ bot, refresh, connected }) {
   const [volF, setVolF] = useState(bot?.volume_filter ?? true);
   const [trail, setTrail] = useState(bot?.trailing_stop ?? true);
   const [partial, setPartial] = useState(bot?.partial_tp ?? true);
+  const [aggr, setAggr] = useState(bot?.aggressive ?? true);
+  const [sizePct, setSizePct] = useState(bot?.size_pct ?? 50);
+  const [assets, setAssets] = useState(bot?.assets ?? ["BTC", "ETH", "SOL"]);
+  const toggleAsset = (a) => setAssets(assets.includes(a) ? (assets.length > 1 ? assets.filter((x) => x !== a) : assets) : [...assets, a]);
 
   const save = async () => {
     try {
-      await api.post("/bot/config", { position_usd: Number(posUsd), auto_fund: autoFund, take_profit_pct: Number(tp), stop_loss_pct: Number(sl), trend_filter: trendF, volume_filter: volF, trailing_stop: trail, partial_tp: partial });
+      await api.post("/bot/config", { position_usd: Number(posUsd), auto_fund: autoFund, take_profit_pct: Number(tp), stop_loss_pct: Number(sl), trend_filter: trendF, volume_filter: volF, trailing_stop: trail, partial_tp: partial, aggressive: aggr, size_pct: Number(sizePct), assets });
       toast.success("Config saved"); refresh();
     } catch (e) { toast.error(formatApiErrorDetail(e.response?.data?.detail)); }
   };
@@ -89,9 +93,26 @@ function ConfigTab({ bot, refresh, connected }) {
     <div className="space-y-5">
       {!connected && <p data-testid="connect-exchange-hint" className="text-[10px] text-term-muted">Connect an exchange (EXCHANGE tab) to start live trading.</p>}
       <div>
-        <Label>POSITION SIZE (USD PER TRADE)</Label>
-        <Input data-testid="position-size-input" type="number" min="1" value={posUsd} onChange={(e) => setPosUsd(e.target.value)} />
+        <Label>MARKETS</Label>
+        <div className="grid grid-cols-3 gap-2">
+          {["BTC", "ETH", "SOL"].map((a) => (
+            <button key={a} data-testid={`asset-toggle-${a}`} onClick={() => toggleAsset(a)}
+              className={`py-2 text-xs tracking-[0.15em] border transition-colors ${assets.includes(a) ? "border-neon-cyan text-neon-cyan bg-neon-cyan/10" : "border-term-border text-term-muted"}`}>{a}</button>
+          ))}
+        </div>
       </div>
+      <Toggle on={aggr} onClick={() => setAggr(!aggr)} testId="aggressive-toggle" labelOn="AGGRESSIVE · SMA 5/13 · RSI CAP 80 · RELAXED FILTERS" labelOff="STANDARD · SMA 7/25 · RSI CAP 70 · FULL FILTERS" />
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <Label>% OF BALANCE PER TRADE</Label>
+          <Input data-testid="size-pct-input" type="number" min="0" max="100" step="5" value={sizePct} onChange={(e) => setSizePct(e.target.value)} />
+        </div>
+        <div>
+          <Label>FIXED SIZE (USD) · USED WHEN % IS 0</Label>
+          <Input data-testid="position-size-input" type="number" min="1" value={posUsd} onChange={(e) => setPosUsd(e.target.value)} />
+        </div>
+      </div>
+      <p className="text-[9px] text-neon-red -mt-3">Bigger size and aggressive entries mean bigger gains AND bigger losses. No bot can guarantee profit.</p>
       <div className="grid grid-cols-2 gap-4">
         <div>
           <Label>TAKE PROFIT (%)</Label>
