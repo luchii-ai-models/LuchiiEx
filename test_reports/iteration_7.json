@@ -1,0 +1,37 @@
+{
+  "summary": "Iter 7 (per-token TP/SL for Solana + watcher + Helius RPC). Backend: new test_iteration7_token_tpsl.py 13/13 pass + iteration6 regression 22/22 pass (35/35, -n 0). Verified: after import GET /solana/wallet has token_tp_pct 25, token_sl_pct 15, token_cfg {}, positions {}; wallet-level 30/12 persists; token_cfg merges across mints (Dacity {tp_pct:50} and BONK {tp_pct:70,sl_pct:5} both kept); token_balances[Dacity] tp 50 (override) / sl 12 (default fallback), price float>0, entry_usd null, move_pct null; 422 for token_sl_pct 101/-1, token_tp_pct -5, per-mint sl 150 / tp -1. Helius: 10 quick GETs, sol_balance 0, no error field. Watcher: fake position entry 0.0001 (TP path) cleared in ~1s, entry 100 (SL path) cleared in ~5s, position at current price NOT cleared after 12s; no 'watcher' warnings in backend.err.log, backend stays up. Frontend (fresh test user, 1920 + 390): import -> TP/SL inputs 25/15; set 30/12 + SAVE -> 'Saved' toast, persists after close/reopen; Dacity search -> add -> card 'no open position · TP +30% / SL −12%'; OVERRIDE TP/SL opens inputs prefilled 30/12, set 50/20 + SET -> card 'TP +50% / SL −20%'; no horizontal overflow at 390px; REMOVE WALLET -> back to import view. All test users/wallets cleaned up (one real user's wallet left untouched).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/solana/config token_cfg", "issue": "Sets token_cfg.<mint> to the whole object sent, so a later {mint:{tp_pct:X}} wipes a sl_pct already saved for the SAME mint. Overrides for other mints are kept. The UI always sends both values, so users don't see it today. Fix: set token_cfg.<mint>.tp_pct and token_cfg.<mint>.sl_pct as separate fields."},
+      {"endpoint": "solana_dex.watcher", "issue": "If TP/SL hits while the wallet holds tokens but the sell keeps failing (e.g. no SOL for fees, no route), the position is not cleared. So a REJECTED bot_log is written every 5s with no limit (log spam). Add a backoff, or mark the position after a failed attempt."},
+      {"endpoint": "POST /api/solana/config token_cfg keys", "issue": "Mint keys are only checked for length (32-44), then used inside a Mongo dotted path. A key with '.' or '$' would create nested fields or fail. Check keys against the base58 alphabet."},
+      {"endpoint": "get_bot (older code)", "issue": "Old DuplicateKeyError tracebacks on bots.user_id_1 in backend.err.log, from concurrent first-time get_bot inserts. Not new this iteration."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Solana tab token card", "issues": ["No way to clear a per-token override and go back to the wallet defaults", "TokenTargets fills its local tp/sl state only on mount, so if the wallet defaults change later the override inputs show old values", "Labels in the 'OVERRIDE TP/SL' link and help text are 9px, which is hard to read on mobile"]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iteration7_token_tpsl.py", "/app/backend/tests/test_iteration6_solana_risk.py", "/app/test_reports/pytest/pytest_iter7.xml"],
+  "action_items": [
+    "Optional: merge per-field token_cfg updates (token_cfg.<mint>.tp_pct / .sl_pct) so partial overrides don't wipe each other",
+    "Optional: add backoff/dedupe in the watcher for repeated failed TP/SL sells",
+    "Optional: validate token_cfg mint keys against base58"
+  ],
+  "critical_code_review_comments": [
+    "watcher: query positions $nin [None, {}] is correct; a token removed from wallet.tokens is still watched while its position exists (probably intended)",
+    "prices() runs once per 5s for all mints across wallets (good batching); the watcher calls balances() only on a hit",
+    "Backend uvicorn --reload also watches /app/backend/tests, so adding a test file reloads the backend (seen in the log). Harmless, but it can make tests flaky while files are being written"
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration7_token_tpsl.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin@gravia.io / Gravia@2026 (not needed; fresh users registered and deleted)",
+  "seed_data_creation": "None kept. Test users/wallets deleted by _id.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: cd /app/backend && set -a && . ../frontend/.env && . ./.env && set +a && pytest tests/test_iteration7_token_tpsl.py tests/test_iteration6_solana_risk.py -n 0. The watcher tests insert positions straight into Mongo for the test user's wallet. db.solana_wallets holds a real user's wallet (teslalicensecompany@gmail.com) - do not touch it."
+}

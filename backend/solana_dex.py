@@ -95,6 +95,8 @@ async def watcher():
                     hit = "TAKE PROFIT" if tp and move >= tp else ("STOP LOSS" if sl and move <= -sl else None)
                     if not hit:
                         continue
+                    if time.time() - float(pos.get("last_fail", 0)) < 120:
+                        continue
                     try:
                         bal = await balances(w["pubkey"])
                         raw = (bal["tokens"].get(mint) or {}).get("raw", 0)
@@ -106,8 +108,9 @@ async def watcher():
                                                      "reason": f"{hit} {mint[:6]}… {move:+.1f}% (entry ${entry:.6g} → ${p:.6g}) · {res['status']}"},
                                   SNAPSHOT.get("price") or 0, f"SOL #{res['sig'][:10]}")
                     except Exception as e:
+                        await db.solana_wallets.update_one({"user_id": w["user_id"]}, {"$set": {f"positions.{mint}.last_fail": time.time()}})
                         await log(db, w["user_id"], {"action": "SELL", "engine": "solana", "confidence": 1.0,
-                                                     "reason": f"{hit} {mint[:6]}… {move:+.1f}% but sell failed: {str(e)[:120]}"},
+                                                     "reason": f"{hit} {mint[:6]}… {move:+.1f}% but sell failed: {str(e)[:120]} · retry in 2 min"},
                                   SNAPSHOT.get("price") or 0, "REJECTED")
         except Exception as e:
             logging.getLogger("solana").warning("watcher: %s", e)

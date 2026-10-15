@@ -17,11 +17,17 @@ const Btn = ({ children, color = "neon-magenta", ...p }) => (
 );
 const err = (e) => toast.error(formatApiErrorDetail(e.response?.data?.detail) || "Request failed");
 
-function TokenTargets({ mint, t, cfg }) {
+function TokenTargets({ mint, t, cfg, reset }) {
   const [open, setOpen] = useState(false);
   const [tp, setTp] = useState(t.tp_pct ?? 25);
   const [sl, setSl] = useState(t.sl_pct ?? 15);
-  if (!open) return <button data-testid={`solana-token-targets-${mint}`} onClick={() => setOpen(true)} className="text-[9px] text-neon-magenta tracking-[0.15em] mt-1">OVERRIDE TP/SL</button>;
+  useEffect(() => { setTp(t.tp_pct ?? 25); setSl(t.sl_pct ?? 15); }, [t.tp_pct, t.sl_pct]);
+  if (!open) return (
+    <div className="flex gap-3 mt-1">
+      <button data-testid={`solana-token-targets-${mint}`} onClick={() => setOpen(true)} className="text-[10px] text-neon-magenta tracking-[0.15em]">OVERRIDE TP/SL</button>
+      {t.overridden && <button data-testid={`solana-token-reset-${mint}`} onClick={() => reset(mint)} className="text-[10px] text-term-muted hover:text-white tracking-[0.15em]">USE DEFAULTS</button>}
+    </div>
+  );
   return (
     <div className="grid grid-cols-3 gap-2 mt-2 items-end">
       <Input data-testid={`solana-token-tp-${mint}`} type="number" min="0" value={tp} onChange={(e) => setTp(e.target.value)} placeholder="TP %" />
@@ -72,6 +78,7 @@ function SolWallet({ w, reload }) {
   const tokens = w.tokens || [];
 
   const cfg = async (body) => { try { await api.post("/solana/config", body); toast.success("Saved"); reload(); } catch (e) { err(e); } };
+  const resetToken = async (mint) => { try { await api.delete(`/solana/config/token/${mint}`); toast.success("Using wallet defaults"); reload(); } catch (e) { err(e); } };
   const search = async () => { try { setHits((await api.get("/solana/tokens/search", { params: { q } })).data); } catch (e) { err(e); } };
   const addToken = (mint) => { if (tokens.includes(mint)) return; cfg({ tokens: [...tokens, mint] }); setHits([]); setQ(""); };
   const swap = async (mint, side) => {
@@ -103,7 +110,7 @@ function SolWallet({ w, reload }) {
         <div><Label>TOKEN TAKE PROFIT (%)</Label><Input data-testid="solana-tp-input" type="number" step="1" min="0" value={tp} onChange={(e) => setTp(e.target.value)} /></div>
         <div><Label>TOKEN STOP LOSS (%)</Label><Input data-testid="solana-sl-input" type="number" step="1" min="0" max="100" value={sl} onChange={(e) => setSl(e.target.value)} /></div>
       </div>
-      <p className="text-[9px] text-term-muted -mt-3">Token prices are checked every 5s. A hit sells that token back to SOL on its own, independent of the BTC bot. Override per token below.</p>
+      <p className="text-[10px] text-term-muted -mt-3">Token prices are checked every 5s. A hit sells that token back to SOL on its own, independent of the BTC bot. Override per token below.</p>
       <Btn data-testid="solana-save-button" onClick={() => cfg({ amount_sol: Number(amount), slippage_bps: Number(slip), token_tp_pct: Number(tp), token_sl_pct: Number(sl) })}>SAVE</Btn>
 
       <div>
@@ -123,7 +130,7 @@ function SolWallet({ w, reload }) {
                   <span className={t.move_pct >= 0 ? "text-neon-green" : "text-neon-red"}>{t.move_pct != null ? `${t.move_pct >= 0 ? "+" : ""}${t.move_pct}%` : "—"} · TP +{t.tp_pct}% / SL −{t.sl_pct}%</span>
                 </div>
               ) : <div className="text-[10px] text-term-muted mt-1">no open position · TP +{t.tp_pct}% / SL −{t.sl_pct}%</div>}
-              <TokenTargets mint={m} t={t} cfg={cfg} />
+              <TokenTargets mint={m} t={t} cfg={cfg} reset={resetToken} />
               <div className="grid grid-cols-2 gap-2 mt-2">
                 <Btn color="neon-green" data-testid={`solana-buy-${m}`} disabled={!!busy} onClick={() => swap(m, "BUY")}>{busy === m + "BUY" ? "SWAPPING…" : `BUY ${w.amount_sol} SOL`}</Btn>
                 <Btn color="neon-red" data-testid={`solana-sell-${m}`} disabled={!!busy || !(t.raw > 0)} onClick={() => swap(m, "SELL")}>{busy === m + "SELL" ? "SWAPPING…" : "SELL ALL"}</Btn>

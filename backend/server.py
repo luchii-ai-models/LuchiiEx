@@ -688,7 +688,7 @@ async def sol_view(user) -> dict:
             entry, p = float(pos.get("entry_usd") or 0), px.get(m)
             out["token_balances"][m] = {**(bal["tokens"].get(m) or {"ui": 0.0, "raw": 0}), **info.get(m, {}), "price": p,
                                         "entry_usd": entry or None, "move_pct": round((p - entry) / entry * 100, 2) if p and entry else None,
-                                        "tp_pct": tp, "sl_pct": sl}
+                                        "tp_pct": tp, "sl_pct": sl, "overridden": m in (w.get("token_cfg") or {})}
     except Exception as e:
         out["error"] = str(e)[:160]
     return out
@@ -723,10 +723,20 @@ async def sol_config(body: SolConfigIn, user=Depends(current_user)):
         upd["tokens"] = list(dict.fromkeys(t.strip() for t in upd["tokens"] if 32 <= len(t.strip()) <= 44))
     if "token_cfg" in upd:
         for m, c in upd.pop("token_cfg").items():
-            if 32 <= len(m) <= 44:
-                upd[f"token_cfg.{m}"] = {k: v for k, v in c.items() if v is not None}
+            if 32 <= len(m) <= 44 and m.isalnum():
+                for k, v in c.items():
+                    if v is not None:
+                        upd[f"token_cfg.{m}.{k}"] = v
     if upd:
         await db.solana_wallets.update_one({"user_id": user["id"]}, {"$set": upd})
+    return await sol_view(user)
+
+
+@api.delete("/solana/config/token/{mint}")
+async def sol_token_reset(mint: str, user=Depends(current_user)):
+    if not mint.isalnum():
+        bad("Invalid mint")
+    await db.solana_wallets.update_one({"user_id": user["id"]}, {"$unset": {f"token_cfg.{mint}": ""}})
     return await sol_view(user)
 
 
