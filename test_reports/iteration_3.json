@@ -1,0 +1,38 @@
+{
+  "summary": "Iteration 3 — Auto-fund + resolve_symbol + first-live-trade pre-flight. Added /app/backend/tests/test_iteration3_autofund.py (11 tests, 11/11 pass) covering: GET /api/bot/state returns auto_fund=true by default for a fresh TEST_ user; POST /api/bot/config persists auto_fund=false and then auto_fund=true (verified via GET round-trip); POST /api/exchange/order and /api/exchange/test-order return 400 'No exchange connected' without creds; POST /api/bot/start returns 400 'Live mode needs a connected exchange' when live and no exchange; unit tests on exchange_service.resolve_symbol (picks BTC/USDC over BTC/USDT when funding has USDC balance; falls back to BTC/USDT when no BTC pair in markets) and exchange_service.ensure_funds (moves whole funding free 40 USDT when trading=2 need=10; no-op when trading already >= need; no-op for coinbase/non-ACCOUNTS exchanges). Full backend regression: 58/58 pass (31 backend_test + 16 iteration2 + 11 iteration3). Frontend UI (admin): Settings → Config shows AUTO-FUND toggle ON by default ('ON · MOVE DEPOSITS TO TRADING BEFORE EACH TRADE'); clicking flips to 'OFF'; SAVE CONFIG shows 'Config saved' toast; reopening modal shows persisted OFF; toggled back to ON and saved; settings tabs config/guardrails/brokers/alerts/wallet/exchange all render. Admin auto_fund left TRUE as instructed.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration3_autofund.py",
+    "/app/backend/tests/test_iteration2_new_endpoints.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/iter3.xml",
+    "/app/test_reports/pytest/iter3_all.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "engine.auto_fund correctly computes need per side (usd for BUY of quote currency, qty for SELL of BTC) and logs TRANSFER on move or REJECTED on failure — matches the spec.",
+    "engine.execute now calls resolve_symbol before fetching ticker/placing the order and runs auto_fund immediately before — correct ordering so funds land in trading account before OKX routes the market order.",
+    "exchange_service.resolve_symbol: good preference logic — picks the quote with any balance across funding+trading accounts, otherwise first available (BTC/USDT on OKX US where BTC/USD isn't listed, matching the user's constraint).",
+    "exchange_service.ensure_funds: moves the whole funding free (not just the shortfall). This is intentional per the user's instruction but means after a BUY-then-SELL cycle, excess quote currency stays in trading. Acceptable because OKX trading→funding is a separate manual action and keeping funds trading-side is required for the next cycle.",
+    "ensure_funds returns 0.0 for exchanges not in ACCOUNTS (coinbase/kraken/etc.) — safe no-op for single-account venues.",
+    "server.exchange_order/exchange_test_order both call engine.auto_fund with bot.auto_fund flag before placing orders — bot config respected on direct manual orders too, not just the scheduler.",
+    "server.py is 733 lines — still over the 700-line soft limit (same comment as iter2). Low priority; split exchange_router/wallet_router when convenient.",
+    "ConfigIn.auto_fund is Optional[bool]; model_dump(exclude_none=True) means sending {} doesn't accidentally clear auto_fund — safe.",
+    "SettingsModal ConfigTab initial state reads bot?.auto_fund ?? true, which matches the new DEFAULT_BOT.auto_fund=True — but for existing admin bots that were created pre-field, the ?? true fallback and set_bot upsert via /api/bot/config save path keeps UX correct. Verified live."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration3_autofund.py"
+  ],
+  "success_rate": {"backend": "100% (58/58)", "frontend": "100% on auto-fund + settings tab regression"},
+  "test_credentials": "admin@gravia.io / Gravia@2026 (from /app/memory/test_credentials.md). Ephemeral TEST_autofund_<uuid>@example.com user created for the auto_fund state tests and cleaned up in the module teardown.",
+  "seed_data_creation": "One TEST_autofund_* user per module run — bot/user/logs/trades/pnl rows deleted after tests via motor cleanup fixture.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend coverage lives in /app/backend/tests/{backend_test.py,test_iteration2_new_endpoints.py,test_iteration3_autofund.py}. Run with pytest from /app/backend (pytest.ini pins -n 2 --dist loadscope). The iteration2 and iteration3 files use os.environ.get fallback for REACT_APP_BACKEND_URL so they work without env export. Real OKX order placement still cannot be exercised in CI — the user will supply their us.okx.com key and fire the first live BTC/USDT test order themselves. ensure_funds behaviour was validated with a FakeEx double, not against real OKX. Admin bot auto_fund=true after test run.",
+  "rca of the issue": "Not a bug fix — new-feature verification. User asked for (1) automatic funding→trading transfer before each trade and (2) US-OKX symbol resolution. Both now implemented: engine.auto_fund gated by bot.auto_fund (default true) runs before every scheduler-driven execute and before manual /api/exchange/order & /api/exchange/test-order; exchange_service.resolve_symbol picks BTC/USDT|USD|USDC based on markets list, preferring the quote the user actually holds, which naturally lands on BTC/USDT for OKX US (no BTC/USD listed) and BTC/USD for Coinbase/Kraken. All boundary paths (no-op when enough funds, no-op for single-account exchange, move whole free funding) covered by unit tests."
+}
