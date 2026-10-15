@@ -48,6 +48,11 @@ User choices: copy from trade-bridge-73; use the env values exactly; no Emergent
 - BTC bot: `trailing_stop` (default on) + `peak_price` tracked every tick while in position; stop-loss % is measured from the peak once price is above entry ("TRAILING STOP hit … locked +x%"), fixed stop from entry otherwise / when off. Config tab toggle.
 - Solana tokens: wallet `trailing_stop` (default on) + `positions.<mint>.peak_usd` updated by the watcher; same peak-based rule; token cards show peak. Verified by unit checks on engine.signal, API round-trips and a simulated watcher position; 35/35 regression tests pass.
 
+## Implemented (2026-10-15, iteration 9 — partial take profit + built-in mints)
+- Built-in default tokens for every Solana wallet: SAINDRA A2yA6AFtfKkfVkfsnGpvsKoUV5kQPpMYboZsBPvmkA9T and Dacity nxPqZ4F7ux8Vph5NFu25rEP6Kx9Gr1U6Fmj36Rjpump (set on import, auto-added when a wallet has no tokens).
+- Partial take profit (`partial_tp`, default on, toggle in CONFIG and SOLANA DEX): first TP hit sells half (BTC: falls back to full sell if half < exchange minimum; `tp_taken` flag prevents repeat), remainder rides the trailing stop. Solana positions keep raw/tp_taken after the half sell; card shows "½ TAKEN".
+- Verified via signal unit checks, config round-trips, default-token import, simulated watcher position; 35/35 regression.
+
 ## Known limits
 - Live order placement has not been tested with real keys
 - Some exchanges reject fake secrets with a decode error before the auth call; this is still shown as "Exchange verification failed: …"

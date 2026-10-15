@@ -19,6 +19,7 @@ DEFAULT_BOT = {
     "realized_pnl": 0.0, "trades_count": 0, "wins": 0, "losses": 0, "alerts_enabled": True, "live_equity": None,
     "last_tick": 0, "pocketoption": None, "auto_fund": True, "start_equity": None, "start_ts": None,
     "take_profit_pct": 1.5, "stop_loss_pct": 1.0, "trend_filter": True, "volume_filter": True, "trailing_stop": True, "peak_price": 0.0,
+    "partial_tp": True, "tp_taken": False,
 }
 
 
@@ -73,7 +74,9 @@ def signal(bot: dict) -> dict:
     tp, sl = float(bot.get("take_profit_pct") or 0), float(bot.get("stop_loss_pct") or 0)
     if not flat and bot.get("entry_price"):
         move = (price - bot["entry_price"]) / bot["entry_price"] * 100
-        if tp and move >= tp:
+        if tp and move >= tp and not bot.get("tp_taken"):
+            if bot.get("partial_tp", True):
+                return {"action": "SELL", "partial": True, "confidence": 0.95, "reason": f"PARTIAL TAKE PROFIT {move:+.2f}% (target +{tp}%) · selling half, rest rides trailing stop · RSI {r}"}
             return {"action": "SELL", "confidence": 0.95, "reason": f"TAKE PROFIT hit {move:+.2f}% (target +{tp}%) · RSI {r}"}
         peak = max(float(bot.get("peak_price") or 0), bot["entry_price"])
         if sl and bot.get("trailing_stop", True) and peak > bot["entry_price"]:
@@ -114,12 +117,17 @@ async def record_fill(bot: dict, side: str, price: float, qty: float, fill: str,
     pnl = 0.0
     upd = {"trades_count": bot["trades_count"] + 1}
     if side == "BUY":
-        upd.update(position_qty=qty, entry_price=price, peak_price=price)
+        upd.update(position_qty=qty, entry_price=price, peak_price=price, tp_taken=False)
         if bot["mode"] != "live":
             upd["cash"] = bot["cash"] - qty * price
+    elif d.get("partial"):
+        pnl = round((price - bot["entry_price"]) * qty, 2)
+        upd.update(position_qty=round(max(bot["position_qty"] - qty, 0), 8), tp_taken=True, realized_pnl=round(bot["realized_pnl"] + pnl, 2))
+        if bot["mode"] != "live":
+            upd["cash"] = bot["cash"] + qty * price
     else:
         pnl = round((price - bot["entry_price"]) * qty, 2)
-        upd.update(position_qty=0.0, entry_price=0.0, peak_price=0.0, realized_pnl=round(bot["realized_pnl"] + pnl, 2),
+        upd.update(position_qty=0.0, entry_price=0.0, peak_price=0.0, tp_taken=False, realized_pnl=round(bot["realized_pnl"] + pnl, 2),
                    wins=bot["wins"] + (pnl > 0), losses=bot["losses"] + (pnl <= 0))
         if bot["mode"] != "live":
             upd["cash"] = bot["cash"] + qty * price
@@ -128,7 +136,8 @@ async def record_fill(bot: dict, side: str, price: float, qty: float, fill: str,
     await log(db, uid, d, price, fill)
     await alerts.notify(bot, f"{'🟢' if side == 'BUY' else '🔴'} {side} {qty} BTC @ ${price:,.2f}" + (f" · P&L {pnl:+.2f}" if side == "SELL" else ""))
     bot = await db.bots.find_one({"user_id": uid})
-    asyncio.create_task(mirror_all(db, bot, side))
+    if not d.get("partial"):
+        asyncio.create_task(mirror_all(db, bot, side))
     await check_daily_loss(bot)
 
 
@@ -173,7 +182,7 @@ async def free_of(ex, cur: str) -> float:
 async def execute(bot: dict, d: dict):
     side, price = d["action"], SNAPSHOT["price"]
     if bot["mode"] != "live":
-        qty = round(order_usd(bot) / price, 6) if side == "BUY" else bot["position_qty"]
+        qty = round(order_usd(bot) / price, 6) if side == "BUY" else bot["position_qty"] * (0.5 if d.get("partial") else 1)
         return await record_fill(bot, side, price, qty, "PAPER FILLED", d)
     uid = bot["user_id"]
     creds = await get_creds(uid)
@@ -194,7 +203,11 @@ async def execute(bot: dict, d: dict):
             o = await market_order(ex, symbol, "BUY", usd, 0, price)
             qty = float(o.get("filled") or 0) or usd / price
         else:
-            qty = min(bot["position_qty"], await free_of(ex, "BTC"))
+            want = bot["position_qty"] * (0.5 if d.get("partial") else 1)
+            qty = min(want, await free_of(ex, "BTC"))
+            if d.get("partial") and qty < min_qty:
+                d = {**d, "partial": False, "reason": d["reason"].replace("PARTIAL TAKE PROFIT", "TAKE PROFIT (half below exchange minimum, selling all)")}
+                qty = min(bot["position_qty"], await free_of(ex, "BTC"))
             if qty < max(min_qty, 1e-8):
                 return await wait_log(uid, bot, f"SELL signal skipped · only {qty} BTC free in trading (minimum {min_qty}). Waiting for deposit to credit.")
             o = await market_order(ex, symbol, "SELL", 0, qty, price)

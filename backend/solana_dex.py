@@ -16,6 +16,7 @@ SOL = "So11111111111111111111111111111111111111112"
 JUP = "https://lite-api.jup.ag"
 TOKEN_PROGRAMS = ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"]
 LAMPORTS = 1_000_000_000
+DEFAULT_MINTS = ["A2yA6AFtfKkfVkfsnGpvsKoUV5kQPpMYboZsBPvmkA9T", "nxPqZ4F7ux8Vph5NFu25rEP6Kx9Gr1U6Fmj36Rjpump"]
 
 
 def rpc_url() -> str:
@@ -51,8 +52,8 @@ async def import_wallet(uid: str, secret: str) -> str:
     pub = str(kp.pubkey())
     await db.solana_wallets.update_one({"user_id": uid}, {"$set": {
         "user_id": uid, "pubkey": pub, "secret_enc": encrypt(secret.strip()), "created_at": now_ms()},
-        "$setOnInsert": {"tokens": [], "amount_sol": 0.05, "enabled": False, "slippage_bps": 300,
-                         "token_tp_pct": 25.0, "token_sl_pct": 15.0, "token_cfg": {}, "positions": {}, "trailing_stop": True}}, upsert=True)
+        "$setOnInsert": {"tokens": list(DEFAULT_MINTS), "amount_sol": 0.05, "enabled": False, "slippage_bps": 300,
+                         "token_tp_pct": 25.0, "token_sl_pct": 15.0, "token_cfg": {}, "positions": {}, "trailing_stop": True, "partial_tp": True}}, upsert=True)
     return pub
 
 
@@ -98,9 +99,12 @@ async def watcher():
                         await db.solana_wallets.update_one({"user_id": w["user_id"]}, {"$set": {f"positions.{mint}.peak_usd": p}})
                     trailing = w.get("trailing_stop", True) and peak > entry
                     from_peak = (p - peak) / peak * 100
-                    hit = ("TAKE PROFIT" if tp and move >= tp else
+                    hit = ("TAKE PROFIT" if tp and move >= tp and not pos.get("tp_taken") else
                            "TRAILING STOP" if sl and trailing and from_peak <= -sl else
                            "STOP LOSS" if sl and not trailing and move <= -sl else None)
+                    partial = hit == "TAKE PROFIT" and w.get("partial_tp", True)
+                    if partial:
+                        hit = "PARTIAL TAKE PROFIT (half sold, rest rides trailing stop)"
                     if not hit:
                         continue
                     if time.time() - float(pos.get("last_fail", 0)) < 120:
@@ -111,7 +115,7 @@ async def watcher():
                         if raw <= 0:
                             await set_position(w["user_id"], mint, None)
                             continue
-                        res = await swap(w["user_id"], mint, SOL, raw)
+                        res = await swap(w["user_id"], mint, SOL, raw // 2 if partial else raw, partial=partial)
                         await log(db, w["user_id"], {"action": "SELL", "engine": "solana", "confidence": 1.0,
                                                      "reason": f"{hit} {mint[:6]}… {move:+.1f}% (entry ${entry:.6g} → ${p:.6g}, peak ${peak:.6g}) · {res['status']}"},
                                   SNAPSHOT.get("price") or 0, f"SOL #{res['sig'][:10]}")
@@ -163,7 +167,7 @@ async def quote(in_mint: str, out_mint: str, amount: int, slippage_bps: int) -> 
     return j
 
 
-async def swap(uid: str, in_mint: str, out_mint: str, amount: int) -> dict:
+async def swap(uid: str, in_mint: str, out_mint: str, amount: int, partial: bool = False) -> dict:
     w = await get_wallet(uid) or {}
     if not w:
         raise RuntimeError("No Solana wallet imported")
@@ -199,7 +203,11 @@ async def swap(uid: str, in_mint: str, out_mint: str, amount: int) -> dict:
         entry = ((old_raw * old_entry) + res["out_amount"] * (p or old_entry)) / new_raw if new_raw and (p or old_entry) else p
         await set_position(uid, out_mint, {"entry_usd": entry, "peak_usd": entry, "raw": new_raw, "ts": now_ms()})
     elif out_mint == SOL:
-        await set_position(uid, in_mint, None)
+        prev = (w.get("positions") or {}).get(in_mint) or {}
+        if partial and prev:
+            await set_position(uid, in_mint, {**prev, "raw": max(int(prev.get("raw") or 0) - amount, 0), "tp_taken": True})
+        else:
+            await set_position(uid, in_mint, None)
     return res
 
 

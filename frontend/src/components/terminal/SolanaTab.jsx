@@ -72,6 +72,7 @@ function SolWallet({ w, reload }) {
   const [tp, setTp] = useState(w.token_tp_pct ?? 25);
   const [sl, setSl] = useState(w.token_sl_pct ?? 15);
   const [trail, setTrail] = useState(w.trailing_stop ?? true);
+  const [partial, setPartial] = useState(w.partial_tp ?? true);
   const [enabled, setEnabled] = useState(!!w.enabled);
   const [q, setQ] = useState("");
   const [hits, setHits] = useState([]);
@@ -116,6 +117,10 @@ function SolWallet({ w, reload }) {
         className={`w-full py-2 text-xs tracking-[0.15em] border transition-colors ${trail ? "border-neon-green text-neon-green bg-neon-green/10" : "border-term-border text-term-muted"}`}>
         {trail ? "TRAILING STOP ON · SL MEASURED FROM PEAK" : "TRAILING STOP OFF · SL FROM ENTRY"}
       </button>
+      <button data-testid="solana-partial-toggle" onClick={() => { setPartial(!partial); cfg({ partial_tp: !partial }); }}
+        className={`w-full py-2 text-xs tracking-[0.15em] border transition-colors ${partial ? "border-neon-green text-neon-green bg-neon-green/10" : "border-term-border text-term-muted"}`}>
+        {partial ? "PARTIAL TP ON · SELL HALF AT TARGET, REST RIDES" : "PARTIAL TP OFF · SELL ALL AT TARGET"}
+      </button>
       <Btn data-testid="solana-save-button" onClick={() => cfg({ amount_sol: Number(amount), slippage_bps: Number(slip), token_tp_pct: Number(tp), token_sl_pct: Number(sl) })}>SAVE</Btn>
 
       <div>
@@ -132,7 +137,7 @@ function SolWallet({ w, reload }) {
               {t.entry_usd ? (
                 <div data-testid={`solana-pos-${m}`} className="flex justify-between text-[10px] mt-1">
                   <span className="text-term-muted">entry ${Number(t.entry_usd).toPrecision(3)}{t.peak_usd ? ` · peak $${Number(t.peak_usd).toPrecision(3)}` : ""}</span>
-                  <span className={t.move_pct >= 0 ? "text-neon-green" : "text-neon-red"}>{t.move_pct != null ? `${t.move_pct >= 0 ? "+" : ""}${t.move_pct}%` : "—"} · TP +{t.tp_pct}% / SL −{t.sl_pct}%</span>
+                  <span className={t.move_pct >= 0 ? "text-neon-green" : "text-neon-red"}>{t.move_pct != null ? `${t.move_pct >= 0 ? "+" : ""}${t.move_pct}%` : "—"} · {t.tp_taken ? "½ TAKEN · " : ""}TP +{t.tp_pct}% / SL −{t.sl_pct}%</span>
                 </div>
               ) : <div className="text-[10px] text-term-muted mt-1">no open position · TP +{t.tp_pct}% / SL −{t.sl_pct}%</div>}
               <TokenTargets mint={m} t={t} cfg={cfg} reset={resetToken} />

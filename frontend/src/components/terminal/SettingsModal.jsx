@@ -77,10 +77,11 @@ function ConfigTab({ bot, refresh, connected }) {
   const [trendF, setTrendF] = useState(bot?.trend_filter ?? true);
   const [volF, setVolF] = useState(bot?.volume_filter ?? true);
   const [trail, setTrail] = useState(bot?.trailing_stop ?? true);
+  const [partial, setPartial] = useState(bot?.partial_tp ?? true);
 
   const save = async () => {
     try {
-      await api.post("/bot/config", { position_usd: Number(posUsd), auto_fund: autoFund, take_profit_pct: Number(tp), stop_loss_pct: Number(sl), trend_filter: trendF, volume_filter: volF, trailing_stop: trail });
+      await api.post("/bot/config", { position_usd: Number(posUsd), auto_fund: autoFund, take_profit_pct: Number(tp), stop_loss_pct: Number(sl), trend_filter: trendF, volume_filter: volF, trailing_stop: trail, partial_tp: partial });
       toast.success("Config saved"); refresh();
     } catch (e) { toast.error(formatApiErrorDetail(e.response?.data?.detail)); }
   };
@@ -103,6 +104,7 @@ function ConfigTab({ bot, refresh, connected }) {
       </div>
       <p className="text-[9px] text-term-muted -mt-3">The bot checks the market every 5 seconds and exits the position as soon as either target is hit. 0 disables a target.</p>
       <Toggle on={trail} onClick={() => setTrail(!trail)} testId="trailing-stop-toggle" labelOn="TRAILING STOP ON · STOP FOLLOWS THE PEAK PRICE" labelOff="TRAILING STOP OFF · FIXED STOP FROM ENTRY" />
+      <Toggle on={partial} onClick={() => setPartial(!partial)} testId="partial-tp-toggle" labelOn="PARTIAL TAKE PROFIT ON · SELL HALF AT TARGET, REST RIDES" labelOff="PARTIAL TAKE PROFIT OFF · SELL ALL AT TARGET" />
       <p className="text-[9px] text-term-muted -mt-3">With trailing on, the stop-loss % is measured from the highest price since entry, so gains get locked in as the price rises.</p>
       <div>
         <Label>ENTRY FILTERS</Label>

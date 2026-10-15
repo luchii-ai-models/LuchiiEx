@@ -123,6 +123,7 @@ class ConfigIn(BaseModel):
     trend_filter: Optional[bool] = None
     volume_filter: Optional[bool] = None
     trailing_stop: Optional[bool] = None
+    partial_tp: Optional[bool] = None
 
 
 @api.post("/bot/config")
@@ -665,6 +666,7 @@ class SolConfigIn(BaseModel):
     token_tp_pct: Optional[float] = Field(None, ge=0, le=10000)
     token_sl_pct: Optional[float] = Field(None, ge=0, le=100)
     trailing_stop: Optional[bool] = None
+    partial_tp: Optional[bool] = None
     token_cfg: Optional[dict[str, TokenCfg]] = None
 
 
@@ -677,6 +679,9 @@ async def sol_view(user) -> dict:
     w = await solana_dex.get_wallet(user["id"])
     if not w:
         return {"connected": False}
+    if not w.get("tokens"):
+        await db.solana_wallets.update_one({"user_id": user["id"]}, {"$set": {"tokens": solana_dex.DEFAULT_MINTS}})
+        w["tokens"] = list(solana_dex.DEFAULT_MINTS)
     out = {k: v for k, v in w.items() if k != "secret_enc"}
     out["connected"] = True
     try:
@@ -692,6 +697,7 @@ async def sol_view(user) -> dict:
             out["token_balances"][m] = {**(bal["tokens"].get(m) or {"ui": 0.0, "raw": 0}), **info.get(m, {}), "price": p,
                                         "entry_usd": entry or None, "move_pct": round((p - entry) / entry * 100, 2) if p and entry else None,
                                         "peak_usd": peak or None, "from_peak_pct": round((p - peak) / peak * 100, 2) if p and peak else None,
+                                        "tp_taken": bool(pos.get("tp_taken")),
                                         "tp_pct": tp, "sl_pct": sl, "overridden": m in (w.get("token_cfg") or {})}
     except Exception as e:
         out["error"] = str(e)[:160]
