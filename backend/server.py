@@ -170,8 +170,10 @@ async def bot_kill_reset(user=Depends(current_user)):
 
 @api.post("/bot/reset")
 async def bot_reset(user=Depends(current_user)):
-    await get_bot(user)
+    bot = await get_bot(user)
+    start = bot.get("live_equity") or None
     await set_bot(user["id"], status="stopped", kill_switch=False, pending=None, cash=engine.START_CASH, position_qty=0.0,
+                  start_equity=start, start_ts=now_ms() if start else None,
                   entry_price=0.0, realized_pnl=0.0, trades_count=0, wins=0, losses=0)
     for c in (db.bot_logs, db.bot_trades, db.bot_pnl):
         await c.delete_many({"user_id": user["id"]})
@@ -190,7 +192,11 @@ async def bot_trades(user=Depends(current_user)):
 
 @api.get("/bot/pnl")
 async def bot_pnl(user=Depends(current_user)):
-    rows = await db.bot_pnl.find({"user_id": user["id"]}, {"_id": 0, "user_id": 0}).sort("ts", -1).to_list(300)
+    bot = await get_bot(user)
+    q = {"user_id": user["id"]}
+    if bot.get("start_ts"):
+        q["ts"] = {"$gte": bot["start_ts"]}
+    rows = await db.bot_pnl.find(q, {"_id": 0, "user_id": 0}).sort("ts", -1).to_list(300)
     return rows[::-1]
 
 
@@ -256,7 +262,7 @@ async def exchange_connect(body: ExchangeIn, user=Depends(current_user)):
     await db.exchange_credentials.update_one({"user_id": user["id"]}, {"$set": {
         "user_id": user["id"], "exchange": body.exchange, "api_key": encrypt(body.api_key.strip()), "hostname": host,
         "secret": encrypt(secret), "password": encrypt(body.password.strip()), "permissions": perms, "created_at": iso_now()}}, upsert=True)
-    await set_bot(user["id"], mode="live")
+    await set_bot(user["id"], mode="live", start_equity=None, start_ts=None)
     await engine.refresh_live_equity({"user_id": user["id"]})
     return {"ok": True, "balances": nonzero_balances(bal), "permissions": perms, "hostname": host, "warnings": perm_warnings(perms)}
 
@@ -370,7 +376,7 @@ async def exchange_test_order(user=Depends(current_user)):
 @api.post("/exchange/disconnect")
 async def exchange_disconnect(user=Depends(current_user)):
     await db.exchange_credentials.delete_one({"user_id": user["id"]})
-    await set_bot(user["id"], status="stopped", live_equity=None)
+    await set_bot(user["id"], status="stopped", live_equity=None, start_equity=None, start_ts=None)
     return {"ok": True}
 
 

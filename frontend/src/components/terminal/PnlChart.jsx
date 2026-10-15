@@ -2,7 +2,7 @@ import { LineChart, Line, ResponsiveContainer, YAxis, Tooltip } from "recharts";
 
 export default function PnlChart({ points, bot }) {
   const data = (points || []).map((p, i) => ({ i, equity: p.equity }));
-  const first = data[0]?.equity ?? 10000;
+  const first = bot?.start_equity ?? data[0]?.equity ?? 0;
   const last = data[data.length - 1]?.equity ?? first;
   const up = last >= first;
   const delta = last - first;
@@ -11,7 +11,7 @@ export default function PnlChart({ points, bot }) {
     <div className="panel flex-1 min-h-0 p-2 flex flex-col">
       <div className="flex items-center justify-between">
         <span className="panel-label">◈ PNL · TOTAL</span>
-        <span className={`tnum text-sm font-bold ${up ? "text-neon-green text-glow-green" : "text-neon-red"}`}>
+        <span data-testid="pnl-total" className={`tnum text-sm font-bold ${up ? "text-neon-green text-glow-green" : "text-neon-red"}`}>
           {delta >= 0 ? "+" : ""}${delta.toFixed(2)}
         </span>
       </div>
@@ -35,8 +35,8 @@ export default function PnlChart({ points, bot }) {
         )}
       </div>
       <div className="flex justify-between panel-label text-[8px] mt-1">
-        <span>START $10,000</span>
-        <span>NOW ${last.toFixed(2)}</span>
+        <span data-testid="pnl-start-equity">START ${first.toFixed(2)}</span>
+        <span data-testid="pnl-now-equity">NOW ${last.toFixed(2)}</span>
       </div>
     </div>
   );

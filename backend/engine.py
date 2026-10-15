@@ -201,7 +201,11 @@ async def refresh_live_equity(bot: dict):
     ex = client_from_doc(creds)
     try:
         bal = await all_balances(ex, creds["exchange"])
-        await set_bot(bot["user_id"], live_equity=total_usd(bal, SNAPSHOT.get("price") or 0))
+        eq = total_usd(bal, SNAPSHOT.get("price") or 0)
+        await set_bot(bot["user_id"], live_equity=eq)
+        fresh = await db.bots.find_one({"user_id": bot["user_id"]}, {"start_equity": 1})
+        if eq > 0 and fresh and not fresh.get("start_equity"):
+            await set_bot(bot["user_id"], start_equity=eq, start_ts=now_ms())
         if "position_qty" in bot:
             await sync_position(bot, bal)
     except Exception as e:
