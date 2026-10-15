@@ -96,8 +96,12 @@ def signal(bot: dict) -> dict:
             if avg_v and candles[-2]["v"] < avg_v:
                 return {"action": "HOLD", "confidence": conf, "reason": f"volume filter · last vol {candles[-2]['v']:.2f} < avg {avg_v:.2f} · RSI {r}"}
         return {"action": "BUY", "confidence": conf, "reason": f"SMA7>SMA25 ({trend:+.3f}%) · RSI {r} · trend+volume confirmed"}
+    if not flat and bot.get("entry_price"):
+        move = (price - bot["entry_price"]) / bot["entry_price"] * 100
+        if s7 < s25 and move < 0:
+            return {"action": "SELL", "confidence": conf, "reason": f"SMA7<SMA25 while losing {move:+.2f}% · cutting early · RSI {r}"}
     if not flat and (s7 < s25 or r > 75):
-        return {"action": "SELL", "confidence": conf, "reason": f"{'SMA7<SMA25' if s7 < s25 else 'RSI overbought'} · RSI {r}"}
+        return {"action": "HOLD", "confidence": conf, "reason": f"in position {((price - bot['entry_price']) / bot['entry_price'] * 100) if bot.get('entry_price') else 0:+.2f}% · winner rides TP/trailing stop · RSI {r}"}
     return {"action": "HOLD", "confidence": conf, "reason": f"{'in position' if not flat else 'no entry'} · trend {trend:+.3f}% · RSI {r}"}
 
 
@@ -121,12 +125,12 @@ async def record_fill(bot: dict, side: str, price: float, qty: float, fill: str,
         if bot["mode"] != "live":
             upd["cash"] = bot["cash"] - qty * price
     elif d.get("partial"):
-        pnl = round((price - bot["entry_price"]) * qty, 2)
+        pnl = round((price - bot["entry_price"]) * qty, 4)
         upd.update(position_qty=round(max(bot["position_qty"] - qty, 0), 8), tp_taken=True, realized_pnl=round(bot["realized_pnl"] + pnl, 2))
         if bot["mode"] != "live":
             upd["cash"] = bot["cash"] + qty * price
     else:
-        pnl = round((price - bot["entry_price"]) * qty, 2)
+        pnl = round((price - bot["entry_price"]) * qty, 4)
         upd.update(position_qty=0.0, entry_price=0.0, peak_price=0.0, tp_taken=False, realized_pnl=round(bot["realized_pnl"] + pnl, 2),
                    wins=bot["wins"] + (pnl > 0), losses=bot["losses"] + (pnl <= 0))
         if bot["mode"] != "live":

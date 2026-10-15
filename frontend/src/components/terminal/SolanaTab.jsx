@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Search, Trash2 } from "lucide-react";
+import { Search, Trash2, Copy } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import api, { formatApiErrorDetail } from "../../lib/api";
 import { toast } from "sonner";
 
@@ -16,6 +17,31 @@ const Btn = ({ children, color = "neon-magenta", ...p }) => (
   <button {...p} className={`w-full border ${COLORS[color]} hover:text-black transition-colors py-2 text-xs tracking-[0.2em] disabled:opacity-30`}>{children}</button>
 );
 const err = (e) => toast.error(formatApiErrorDetail(e.response?.data?.detail) || "Request failed");
+
+function FundGuide({ pubkey }) {
+  const [open, setOpen] = useState(false);
+  const copy = async () => { try { await navigator.clipboard.writeText(pubkey); toast.success("Address copied"); } catch { toast.error("Copy failed"); } };
+  return (
+    <div className="panel p-3" data-testid="solana-fund-guide">
+      <button data-testid="solana-fund-toggle" onClick={() => setOpen(!open)} className="w-full flex justify-between text-[10px] tracking-[0.15em] text-neon-magenta">
+        <span>FUND THIS WALLET</span><span>{open ? "−" : "+"}</span>
+      </button>
+      {open && (
+        <div className="mt-3 flex flex-col sm:flex-row gap-4 items-center sm:items-start">
+          <div className="bg-white p-2 shrink-0" data-testid="solana-fund-qr"><QRCodeSVG value={`solana:${pubkey}`} size={132} /></div>
+          <div className="flex-1 min-w-0 space-y-2">
+            <p className="text-[10px] text-term-muted">Send SOL (Solana network only) to this address from Phantom, Coinbase, OKX, Binance or any exchange. The bot needs SOL for buys and ~0.01 SOL for fees.</p>
+            <div className="flex items-center gap-2 border border-term-border p-2">
+              <span data-testid="solana-fund-address" className="font-mono text-[10px] text-white break-all flex-1">{pubkey}</span>
+              <button data-testid="solana-fund-copy" onClick={copy} className="text-neon-magenta hover:text-white shrink-0"><Copy size={14} /></button>
+            </div>
+            <p className="text-[10px] text-neon-red">Do not send BTC, ETH or tokens on other networks — they would be lost.</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function TokenTargets({ mint, t, cfg, reset }) {
   const [open, setOpen] = useState(false);
@@ -100,6 +126,8 @@ function SolWallet({ w, reload }) {
         <div className="flex justify-between text-sm mt-1"><span className="text-term-muted text-[10px]">SOL BALANCE</span><span data-testid="solana-sol-balance" className="text-neon-green">{w.sol_balance != null ? `◎ ${w.sol_balance.toFixed(4)}` : "—"}</span></div>
         {w.error && <p className="text-[10px] text-neon-red mt-1">{w.error}</p>}
       </div>
+
+      <FundGuide pubkey={w.pubkey} />
 
       <button data-testid="solana-enabled-toggle" onClick={() => { setEnabled(!enabled); cfg({ enabled: !enabled }); }}
         className={`w-full py-2 text-xs tracking-[0.15em] border transition-colors ${enabled ? "border-neon-green text-neon-green bg-neon-green/10" : "border-term-border text-term-muted"}`}>
