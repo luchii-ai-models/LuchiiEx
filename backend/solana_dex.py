@@ -13,7 +13,7 @@ from exchange_service import decrypt, encrypt
 
 SOL = "So11111111111111111111111111111111111111112"
 JUP = "https://lite-api.jup.ag"
-TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+TOKEN_PROGRAMS = ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"]
 LAMPORTS = 1_000_000_000
 
 
@@ -55,11 +55,11 @@ async def import_wallet(uid: str, secret: str) -> str:
 
 
 async def balances(pubkey: str) -> dict:
-    sol, accts = await asyncio.gather(
+    sol, *acct_sets = await asyncio.gather(
         rpc("getBalance", [pubkey]),
-        rpc("getTokenAccountsByOwner", [pubkey, {"programId": TOKEN_PROGRAM}, {"encoding": "jsonParsed"}]))
+        *[rpc("getTokenAccountsByOwner", [pubkey, {"programId": p}, {"encoding": "jsonParsed"}]) for p in TOKEN_PROGRAMS])
     toks = {}
-    for a in accts["value"]:
+    for a in [x for s in acct_sets for x in s["value"]]:
         info = a["account"]["data"]["parsed"]["info"]
         amt = info["tokenAmount"]
         toks[info["mint"]] = {"raw": int(amt["amount"]), "ui": float(amt["uiAmount"] or 0), "decimals": amt["decimals"]}

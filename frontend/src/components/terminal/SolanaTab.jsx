@@ -7,8 +7,13 @@ const Label = ({ children }) => <div className="panel-label mb-2">{children}</di
 const Input = (props) => (
   <input {...props} className="w-full bg-transparent border-b border-neon-magenta/60 focus:border-neon-magenta outline-none py-2 text-white text-sm" />
 );
+const COLORS = {
+  "neon-magenta": "border-neon-magenta text-neon-magenta hover:bg-neon-magenta",
+  "neon-green": "border-neon-green text-neon-green hover:bg-neon-green",
+  "neon-red": "border-neon-red text-neon-red hover:bg-neon-red",
+};
 const Btn = ({ children, color = "neon-magenta", ...p }) => (
-  <button {...p} className={`w-full border border-${color} text-${color} hover:bg-${color} hover:text-black transition-colors py-2 text-xs tracking-[0.2em] disabled:opacity-30`}>{children}</button>
+  <button {...p} className={`w-full border ${COLORS[color]} hover:text-black transition-colors py-2 text-xs tracking-[0.2em] disabled:opacity-30`}>{children}</button>
 );
 const err = (e) => toast.error(formatApiErrorDetail(e.response?.data?.detail) || "Request failed");
 
@@ -58,7 +63,10 @@ function SolWallet({ w, reload }) {
     try { const r = await api.post("/solana/swap", { mint, side }); toast.success(`${side} ${r.data.status} · ${r.data.sig.slice(0, 10)}…`); reload(); }
     catch (e) { err(e); } finally { setBusy(""); }
   };
-  const remove = async () => { if (!window.confirm("Remove the Solana wallet from this account?")) return; await api.delete("/solana/wallet"); reload(); };
+  const remove = async () => {
+    if (!window.confirm("Remove the Solana wallet from this account?")) return;
+    try { await api.delete("/solana/wallet"); reload(); } catch (e) { err(e); }
+  };
 
   return (
     <div className="space-y-5" data-testid="solana-wallet">
@@ -91,7 +99,7 @@ function SolWallet({ w, reload }) {
               </div>
               <div className="flex justify-between text-[10px] text-term-muted mt-1"><span className="font-mono">{m.slice(0, 10)}…{m.slice(-6)}</span><span>bal {t.ui ?? 0} {t.price ? `· $${Number(t.price).toPrecision(3)}` : ""}</span></div>
               <div className="grid grid-cols-2 gap-2 mt-2">
-                <Btn color="neon-green" data-testid={`solana-buy-${m}`} disabled={!!busy} onClick={() => swap(m, "BUY")}>{busy === m + "BUY" ? "SWAPPING…" : `BUY ${amount} SOL`}</Btn>
+                <Btn color="neon-green" data-testid={`solana-buy-${m}`} disabled={!!busy} onClick={() => swap(m, "BUY")}>{busy === m + "BUY" ? "SWAPPING…" : `BUY ${w.amount_sol} SOL`}</Btn>
                 <Btn color="neon-red" data-testid={`solana-sell-${m}`} disabled={!!busy || !(t.raw > 0)} onClick={() => swap(m, "SELL")}>{busy === m + "SELL" ? "SWAPPING…" : "SELL ALL"}</Btn>
               </div>
             </div>
@@ -99,7 +107,7 @@ function SolWallet({ w, reload }) {
         })}
         {tokens.length < 5 && (
           <div className="flex gap-2 items-end">
-            <div className="flex-1"><Input data-testid="solana-token-search-input" placeholder="Search symbol or paste mint address" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} /></div>
+            <div className="flex-1"><Input data-testid="solana-token-search-input" placeholder="Symbol or mint address" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} /></div>
             <button data-testid="solana-token-search-button" onClick={search} className="border border-neon-magenta text-neon-magenta px-3 py-2 hover:bg-neon-magenta hover:text-black"><Search size={14} /></button>
           </div>
         )}

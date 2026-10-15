@@ -704,7 +704,7 @@ async def sol_config(body: SolConfigIn, user=Depends(current_user)):
         bad("Import a Solana wallet first")
     upd = body.model_dump(exclude_none=True)
     if "tokens" in upd:
-        upd["tokens"] = [t.strip() for t in upd["tokens"] if 32 <= len(t.strip()) <= 44]
+        upd["tokens"] = list(dict.fromkeys(t.strip() for t in upd["tokens"] if 32 <= len(t.strip()) <= 44))
     if upd:
         await db.solana_wallets.update_one({"user_id": user["id"]}, {"$set": upd})
     return await sol_view(user)

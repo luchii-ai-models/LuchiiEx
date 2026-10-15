@@ -1,0 +1,47 @@
+{
+  "summary": "Iter 6 (risk controls + Solana DEX via Jupiter). Backend: new pytest file test_iteration6_solana_risk.py, 22/22 pass. Covers: bot/config TP/SL/trend/volume save+echo, defaults for fresh user (1.5/1.0/true/true), 422 for TP>100, TP<0, SL<0, mode 'dry'; all 7 /api/solana routes 401 without token; fresh wallet {connected:false}; config/swap before import -> 400; garbage key -> 400 friendly msg; valid generated key -> {ok,pubkey}, GET connected:true, sol_balance 0, no secret_enc/_id; isolation (user B sees connected:false); config saves tokens/amount/slippage/enabled, invalid-length mints filtered, token_balances symbol 'Dacity'; 422 for slippage<10, amount 0, >5 tokens; search 'Dacity' returns mint/symbol/name/liquidity incl. the Dacity mint; BUY on empty wallet -> 400 'Swap failed: need 0.055 SOL incl. fees, wallet has 0.0 SOL' (no sig); SELL with no balance -> 400; DELETE -> ok then connected:false. engine.signal unit with synthetic SNAPSHOT: TAKE PROFIT, STOP LOSS, volume filter HOLD (BUY when off), trend filter HOLD (BUY when filters off) all pass. Frontend (admin, 1920 + 390): settings config tab works end to end (TP 2 + volume OFF saved, 'Config saved' toast, values still there after reopen, then set back to TP 1.5 / volume ON). Solana tab works end to end: import button disabled under 20 chars, import -> wallet view with all testids, 'Dacity' search gives 8 hits, clicking a hit adds the token card (Dacity, bal 0, price), SELL disabled, BUY shows 'SWAPPING…' then error toast 'Swap failed: need ...', no page errors; SAVE amount, enabled toggle, token remove and wallet remove (confirm) all work. Mobile 390px has no horizontal overflow and search by pasted mint + Enter works. Regression: footer text matches exactly, no EXECUTION MODE/DRY text. One CRITICAL bug found in code review and confirmed on-chain: Token-2022 balances are invisible (details below).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "solana_dex.balances() -> GET /api/solana/wallet, POST /api/solana/swap SELL, engine mirror SELL", "issue": "balances() only calls getTokenAccountsByOwner with the legacy SPL program (TokenkegQ...). The test token Dacity (nxPqZ4...Rjpump) belongs to Token-2022 (owner TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb, checked with getAccountInfo on mainnet). Most new pump.fun tokens are also Token-2022. So after a real BUY, the token balance still shows 0, SELL ALL stays disabled, manual SELL returns 'No balance of that token to sell' and bot-mirrored SELLs log 'no token balance to sell'. The bought tokens can never be sold back to SOL through the app.", "priority": "CRITICAL"}
+    ],
+    "minor": [
+      {"endpoint": "engine.record_fill -> mirror_all -> solana_dex.mirror", "issue": "Mirror swaps run one after another inside the scheduler loop. Each swap re-fetches balances and confirm() can wait up to 30s, so 5 tokens can block ticks for all users for about 150s, which defeats the 5s tick and TP/SL timing. Run mirrors with asyncio.create_task or gather."},
+      {"endpoint": "solana_dex.mirror BUY", "issue": "mirror() fetches balances once, then each swap() fetches them again. Balance is checked per token, not for the total of all buys, so with N tokens the later buys fail one by one. This is only a cosmetic issue."},
+      {"endpoint": "POST /api/solana/config", "issue": "Duplicate mints are not removed. The 5-token max_length check runs before invalid entries are filtered out."},
+      {"endpoint": "auth (playbook)", "issue": "Auth uses a Bearer token in localStorage: no httpOnly auth cookie, and CORS is access-control-allow-origin '*'. Bcrypt hash is $2b$ (OK). I did not test brute-force lockout, to avoid locking the admin account. This is the existing design, not part of this feature."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "SolanaTab token card BUY button", "issue": "The label uses the local unsaved amount ('BUY 0.02 SOL' while typing), but /solana/swap uses the saved amount_sol. Clicking BUY before SAVE spends a different amount than the label shows. Use w.amount_sol in the label, or save before swapping.", "selector": "[data-testid^='solana-buy-']", "priority": "MEDIUM"},
+      {"component": "SolanaTab remove()", "issue": "api.delete has no try/catch or error toast. A failed request gives an unhandled promise rejection.", "selector": "[data-testid='solana-remove-button']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Solana tab mobile 390px", "issues": ["The token search placeholder gets cut off ('...mint addres'). Cosmetic only."]},
+      {"screen": "SolanaTab Btn", "issues": ["Button colours are built at runtime (border-${color}, hover:bg-${color}). They render today only because the same classes appear elsewhere. Use static class maps so Tailwind purge can't drop them."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iteration6_solana_risk.py", "/app/test_reports/pytest/pytest_iter6.xml"],
+  "action_items": [
+    "CRITICAL: in solana_dex.balances() also query the Token-2022 program TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb (a second getTokenAccountsByOwner call in the same asyncio.gather) and merge the results. Otherwise Dacity and other pump.fun Token-2022 tokens can be bought but never sold.",
+    "Take Solana and other mirrors out of the scheduler's critical path (create_task or gather) so 30s confirm waits don't block the 5s ticks.",
+    "SolanaTab: BUY label should show the saved w.amount_sol, or save the amount before swapping.",
+    "SolanaTab: wrap remove() in try/catch with an error toast.",
+    "Optional: remove duplicate mints in /solana/config."
+  ],
+  "critical_code_review_comments": [
+    "solana_dex.balances misses Token-2022 accounts (confirmed on-chain for the Dacity mint).",
+    "record_fill awaits mirror_all inline, so on-chain confirm latency stalls the global scheduler.",
+    "server.py is 844 lines (over 700). Consider moving the solana routes into a router module.",
+    "Solana public RPC (api.mainnet-beta.solana.com) is rate-limited. sol_view puts errors into out.error, which is handled gracefully, but a paid or dedicated RPC is advisable in production."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration6_solana_risk.py"],
+  "success_rate": {"backend": "100% (22/22 tests); 1 critical bug found by code review and on-chain check", "frontend": "100% of requested flows passed"},
+  "test_credentials": "admin@gravia.io / Gravia@2026 (from /app/memory/test_credentials.md); test users test_sol_*@example.com are registered and deleted by the pytest fixture",
+  "seed_data_creation": "None kept. Test users, wallets, bots, logs and bot_pnl are cleaned up by the fixture. Admin's solana wallet was removed via the UI, the solana bot_log from the manual BUY error was deleted, and admin config was set back to TP 1.5 / volume ON.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: cd /app/backend && set -a && . ./.env && . ../frontend/.env && set +a && python -m pytest tests/test_iteration6_solana_risk.py -v. After the Token-2022 fix, verify with a script that sol_view/balances calls getTokenAccountsByOwner for both programs (no funded wallet available). Do not call /api/bot/start or /api/exchange/test-order, and do not fund wallets.",
+  "rca of the issue": "Token-2022 bug: balances() hardcodes TOKEN_PROGRAM='TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'. Token-2022 mints keep holder accounts under program TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb, which this RPC filter never returns. Reproduce: getAccountInfo(nxPqZ4F7ux8Vph5NFu25rEP6Kx9Gr1U6Fmj36Rjpump) -> owner TokenzQ...; any wallet holding it gets an empty value list from the current query. Fix: gather two getTokenAccountsByOwner calls (one per programId) and merge them into toks."
+}

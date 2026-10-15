@@ -33,11 +33,18 @@ User choices: copy from trade-bridge-73; use the env values exactly; no Emergent
 - First real OKX fill confirmed: SELL 0.000111 BTC/USDT @ 80,658.90 (order 4012130822437031936).
 - P&L chart starts from the real exchange balance (start_equity/start_ts on the bot) instead of $10,000. get_bot creates the bot with an upsert, so parallel first requests no longer cause duplicate-key 500s.
 
+## Implemented (2026-10-15, iteration 6 — strategy controls + Solana DEX)
+- Bot tick is now 5s (BOT_TICK_SECONDS=5). Per-bot take_profit_pct (default 1.5), stop_loss_pct (default 1.0), trend_filter (BUY only when price is above a rising SMA25) and volume_filter (BUY only when the last closed 1-min candle's volume is above the 20-bar average). TP/SL exits fire on any tick while in position. Config tab exposes all four.
+- Solana DEX (Jupiter lite-api, mainnet): per-user private key imported in Settings → SOLANA DEX, Fernet-encrypted in db.solana_wallets, never returned. Token search (Jupiter), up to 5 mints, SOL-per-buy, slippage, enable toggle. Every bot BUY/SELL fill mirrors into SOL→token / token→SOL swaps (non-blocking create_task); manual BUY/SELL buttons per token. Balances read legacy SPL + Token-2022. Swaps are logged in the execution log and db.solana_swaps. Insufficient SOL fails before broadcast.
+- No win-rate guarantee is made or implied; the controls above are risk management, not a 100% win rate.
+- iteration_6: 22/22 backend, all frontend flows (desktop + 390px) passed; test fixture teardown fixed for xdist.
+
 ## Known limits
 - Live order placement has not been tested with real keys
 - Some exchanges reject fake secrets with a decode error before the auth call; this is still shown as "Exchange verification failed: …"
 - Binance.com may be geo-blocked from the server (HTTP 451)
+- SOLANA_RPC_URL is the public mainnet RPC (rate-limited); a dedicated RPC is advisable for production. The user still needs to pick the two intended token mints via search (several SAINDRA/Dacity mints exist).
 
 ## Backlog
 - P1: Connect an LLM for Luchii chat and help when the user wants it
-- P2: Check the exchange minimum order size before placing live orders
+- P2: Dedicated Solana RPC; TP/SL for Solana token positions themselves (currently they follow the BTC signal)

@@ -123,7 +123,7 @@ async def record_fill(bot: dict, side: str, price: float, qty: float, fill: str,
     await log(db, uid, d, price, fill)
     await alerts.notify(bot, f"{'🟢' if side == 'BUY' else '🔴'} {side} {qty} BTC @ ${price:,.2f}" + (f" · P&L {pnl:+.2f}" if side == "SELL" else ""))
     bot = await db.bots.find_one({"user_id": uid})
-    await mirror_all(db, bot, side)
+    asyncio.create_task(mirror_all(db, bot, side))
     await check_daily_loss(bot)
 
 
