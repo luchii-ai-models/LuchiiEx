@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { X, Link2, AlertTriangle, Unplug, Bell, Shield, Wallet, Sliders, Send, Server, Radio } from "lucide-react";
 import api, { formatApiErrorDetail } from "../../lib/api";
 import WalletConnect from "./WalletConnect";
+import RealWallet from "./RealWallet";
+import ExchangeTools from "./ExchangeTools";
 import { toast } from "sonner";
 
 const TABS = [
@@ -189,71 +191,10 @@ function AlertsTab({ bot, refresh }) {
 }
 
 function WalletTab({ bot, refresh, connected, goExchange }) {
-  const [real, setReal] = useState(null);
-  const [addr, setAddr] = useState(null);
-  const [wd, setWd] = useState({ amount: "", address: "" });
-  const [busy, setBusy] = useState(false);
-
-  const loadReal = async () => {
-    setBusy(true);
-    try { const { data } = await api.get("/wallet/real/balance"); setReal(data); }
-    catch (e) { toast.error(formatApiErrorDetail(e.response?.data?.detail)); }
-    finally { setBusy(false); }
-  };
-  const loadAddr = async () => {
-    try { const { data } = await api.get("/wallet/real/deposit-address?currency=BTC"); setAddr(data); }
-    catch (e) { toast.error(formatApiErrorDetail(e.response?.data?.detail)); }
-  };
-  const doWithdraw = async () => {
-    setBusy(true);
-    try { await api.post("/wallet/real/withdraw", { currency: "BTC", amount: Number(wd.amount), address: wd.address }); toast.success("Withdrawal submitted"); setWd({ amount: "", address: "" }); }
-    catch (e) { toast.error(formatApiErrorDetail(e.response?.data?.detail)); }
-    finally { setBusy(false); }
-  };
-
   return (
     <div className="space-y-5">
-      {/* Real */}
-      <div className="border border-term-border p-3 space-y-3">
-        <span className="panel-label">REAL WALLET (EXCHANGE)</span>
-        {!connected ? (
-          <p className="text-[10px] text-term-muted">Connect an exchange wallet below to view real balances, deposit address, and withdraw.</p>
-        ) : (
-          <>
-            <div className="grid grid-cols-2 gap-2">
-              <button data-testid="real-balance-button" onClick={loadReal} disabled={busy}
-                className="border border-neon-cyan text-neon-cyan hover:bg-neon-cyan hover:text-black transition-colors py-2 text-[10px] tracking-[0.1em]">BALANCE</button>
-              <button data-testid="real-address-button" onClick={loadAddr}
-                className="border border-neon-magenta text-neon-magenta hover:bg-neon-magenta hover:text-black transition-colors py-2 text-[10px] tracking-[0.1em]">BTC DEPOSIT ADDR</button>
-            </div>
-            {real && (
-              <div className="text-[10px] tnum max-h-24 overflow-y-auto border-t border-term-border pt-2">
-                {Object.entries(real.balances || {}).map(([k, v]) => (
-                  <div key={k} className="flex justify-between"><span className="text-term-muted">{k}</span><span className="text-white">{v}</span></div>
-                ))}
-                {Object.keys(real.balances || {}).length === 0 && <span className="text-term-muted">No balances.</span>}
-              </div>
-            )}
-            {addr && (
-              <div className="text-[10px] break-all border border-neon-magenta/30 bg-neon-magenta/5 p-2">
-                <span className="text-term-muted">BTC deposit address:</span><br /><span className="text-neon-magenta">{addr.address}</span>
-                {addr.tag && <div className="text-neon-cyan mt-1">tag/memo: {addr.tag}</div>}
-              </div>
-            )}
-            <div className="border-t border-term-border pt-2 space-y-2">
-              <div className="panel-label text-[9px]">WITHDRAW BTC</div>
-              <Input type="number" placeholder="amount BTC" value={wd.amount} onChange={(e) => setWd({ ...wd, amount: e.target.value })} />
-              <Input placeholder="destination address" value={wd.address} onChange={(e) => setWd({ ...wd, address: e.target.value })} />
-              <button data-testid="real-withdraw-button" onClick={doWithdraw} disabled={busy || !wd.amount || !wd.address}
-                className="w-full border border-neon-red text-neon-red hover:bg-neon-red hover:text-black transition-colors py-2 text-xs tracking-[0.15em] disabled:opacity-30">
-                ⚠ WITHDRAW REAL BTC
-              </button>
-              <p className="text-[9px] text-term-muted">Requires withdrawal-enabled API keys. Real funds leave your exchange.</p>
-            </div>
-          </>
-        )}
-      </div>
-      <WalletConnect connected={connected} goExchange={goExchange} depositAddr={addr?.address} loadAddr={loadAddr} />
+      <RealWallet bot={bot} refresh={refresh} connected={connected} />
+      <WalletConnect connected={connected} goExchange={goExchange} />
     </div>
   );
 }
@@ -261,7 +202,7 @@ function WalletTab({ bot, refresh, connected, goExchange }) {
 const KEY_HELP = {
   coinbase: "coinbase.com → Settings → API → New API key (CDP). Enable View + Trade. API KEY = key name (organizations/…/apiKeys/…). SECRET = the full private key incl. -----BEGIN/END----- lines.",
   kraken: "kraken.com → Settings → API → Create key. Enable Query Funds, Query/Create & Modify Orders (+ Withdraw Funds for withdrawals).",
-  okx: "okx.com → Profile → API → Create V5 key with Trade permission. Enter the passphrase you set when creating it.",
+  okx: "okx.com → Profile → API → Create V5 key with Read + Trade (+ Withdraw) permission, Trusted IP off. Enter the passphrase you set when creating it. Global, US and EEA accounts are detected automatically.",
   binanceus: "binance.us → Profile → API Management → Create API. Enable Spot Trading; leave IP restriction off (or whitelist our server).",
   binance: "binance.com → API Management. Note: binance.com blocks some server regions (error 451). Use Binance.US if you are in the US.",
   cryptocom: "crypto.com/exchange → Settings → API Keys. Enable Trade. (The Crypto.com App wallet has no trading API; use the Exchange.)",
@@ -283,7 +224,12 @@ function ExchangeTab({ bot, refresh, connected, preset }) {
 
   const connect = async () => {
     setBusy(true);
-    try { await api.post("/exchange/connect", { exchange, api_key: apiKey, secret, password }); toast.success(`Connected to ${exchange} · LIVE`); setApiKey(""); setSecret(""); setPassword(""); refresh(); }
+    try {
+      const { data } = await api.post("/exchange/connect", { exchange, api_key: apiKey, secret, password });
+      toast.success(`Connected to ${exchange}${data.hostname ? ` (${data.hostname})` : ""} · LIVE`);
+      (data.warnings || []).forEach((w) => toast.warning(w, { duration: 12000 }));
+      setApiKey(""); setSecret(""); setPassword(""); refresh();
+    }
     catch (e) { toast.error(formatApiErrorDetail(e.response?.data?.detail)); }
     finally { setBusy(false); }
   };
@@ -311,6 +257,7 @@ function ExchangeTab({ bot, refresh, connected, preset }) {
         <button data-testid="disconnect-exchange-button" onClick={disconnect}
           className="border border-neon-red text-neon-red hover:bg-neon-red hover:text-black transition-colors px-3 py-1.5 text-xs flex items-center gap-1"><Unplug size={12} /> DISCONNECT</button>
       </div>
+      <ExchangeTools refresh={refresh} />
       <button data-testid="live-test-order-button" onClick={testOrder} disabled={busy}
         className="w-full border border-neon-magenta text-neon-magenta hover:bg-neon-magenta hover:text-black transition-colors py-2 text-xs tracking-[0.2em] disabled:opacity-30">
         {busy ? "EXECUTING LIVE ORDER…" : "FIRE LIVE TEST ORDER (MIN SIZE BUY → SELL)"}

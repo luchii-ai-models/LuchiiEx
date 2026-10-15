@@ -28,13 +28,43 @@ async function connectBrowserWallet(kind) {
   return { chain: "evm", address: a };
 }
 
-export default function WalletConnect({ connected, goExchange, depositAddr, loadAddr }) {
+async function sendFromWallet(w, to, amount) {
+  if (w.chain === "btc") {
+    const btc = window.okxwallet?.bitcoin;
+    if (!btc) throw new Error("OKX Wallet (Bitcoin) not found in this browser.");
+    return btc.sendBitcoin(to, Math.round(amount * 1e8));
+  }
+  const eth = w.provider === "OKX Wallet" ? window.okxwallet
+    : w.provider === "Coinbase Wallet" ? (window.coinbaseWalletExtension || window.ethereum) : window.ethereum;
+  if (!eth) throw new Error(`${w.provider} not found in this browser.`);
+  const wei = BigInt(Math.round(amount * 1e9)) * 1000000000n;
+  return eth.request({ method: "eth_sendTransaction", params: [{ from: w.address, to, value: "0x" + wei.toString(16) }] });
+}
+
+export default function WalletConnect({ connected, goExchange }) {
   const [wallets, setWallets] = useState([]);
   const [manual, setManual] = useState("");
   const [payApp, setPayApp] = useState(null);
+  const [depositAddr, setDepositAddr] = useState(null);
+  const [syncing, setSyncing] = useState(false);
 
-  const load = () => api.get("/wallet/web3").then((r) => setWallets(r.data)).catch(() => {});
+  const load = () => { setSyncing(true); return api.get("/wallet/web3").then((r) => setWallets(r.data)).catch(() => {}).finally(() => setSyncing(false)); };
   useEffect(() => { load(); }, []);
+  const loadAddr = async () => {
+    try { const { data } = await api.get("/wallet/real/deposit-address?currency=BTC"); setDepositAddr(data.address); }
+    catch (e) { toast.error(formatApiErrorDetail(e.response?.data?.detail)); }
+  };
+  const send = async (w) => {
+    const amt = window.prompt(`Amount of ${w.chain === "btc" ? "BTC" : "ETH"} to send from ${w.provider} to your exchange:`);
+    if (!amt || !(Number(amt) > 0)) return;
+    try {
+      const coin = w.chain === "btc" ? "BTC" : "ETH";
+      const { data } = await api.get(`/wallet/real/deposit-address?currency=${coin}${coin === "ETH" ? "&network=ERC20" : ""}`);
+      const tx = await sendFromWallet(w, data.address, Number(amt));
+      toast.success(`Sent ${amt} ${coin} to exchange · tx ${String(tx).slice(0, 14)}…`);
+      setTimeout(load, 4000);
+    } catch (e) { toast.error(e.response ? formatApiErrorDetail(e.response.data?.detail) : (e.message || "Send failed")); }
+  };
 
   const link = async (provider, payload) => {
     try { await api.post("/wallet/web3/link", { provider, ...payload }); toast.success(`${provider} linked`); load(); }
@@ -72,13 +102,19 @@ export default function WalletConnect({ connected, goExchange, depositAddr, load
             onClick={() => { link("Wallet", { chain: manual.startsWith("0x") ? "evm" : "btc", address: manual.trim() }); setManual(""); }}>LINK</button>
         </div>
         {wallets.map((w) => (
-          <div key={w.address} data-testid={`linked-wallet-${w.address}`} className="flex items-center justify-between text-[10px] tnum border-t border-term-border pt-1.5">
-            <span className="text-term-muted truncate max-w-[55%]">{w.provider} · {w.address}</span>
-            <span className="text-neon-cyan">{w.balance ?? "—"} {w.chain === "btc" ? "BTC" : "ETH"}</span>
+          <div key={w.address} data-testid={`linked-wallet-${w.address}`} className="flex items-center justify-between gap-2 text-[10px] tnum border-t border-term-border pt-1.5">
+            <span className="text-term-muted truncate max-w-[45%]">{w.provider} · {w.address}</span>
+            <span className="text-neon-cyan">{w.balance ?? "—"} {w.chain === "btc" ? "BTC" : "ETH"}{w.usd != null ? ` · $${w.usd}` : ""}</span>
+            {connected && w.provider !== "Wallet" && (
+              <button data-testid={`send-to-exchange-${w.address}`} onClick={() => send(w)} className="text-neon-magenta hover:underline">SEND TO EXCHANGE</button>
+            )}
             <button data-testid={`unlink-wallet-${w.address}`} onClick={() => remove(w.address)} className="text-term-muted hover:text-neon-red"><Trash2 size={11} /></button>
           </div>
         ))}
-        <p className="text-[9px] text-term-muted">Self-custody wallets keep your keys, so the bot can't sign trades from them. Move BTC to a connected exchange wallet to trade it live.</p>
+        {wallets.length > 0 && (
+          <button data-testid="wallet-sync-button" onClick={load} disabled={syncing} className="text-[9px] text-neon-cyan underline">{syncing ? "syncing…" : "sync balances"}</button>
+        )}
+        <p className="text-[9px] text-term-muted">Self-custody wallets keep your keys, so the bot can't sign trades from them. Use SEND TO EXCHANGE (you approve it in your wallet) to move funds to your connected exchange and trade them live.</p>
       </div>
 
       <div className="border border-term-border p-3 space-y-2">

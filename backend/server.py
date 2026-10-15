@@ -23,7 +23,9 @@ from auth import (check_lockout, clear_fails, create_token, current_user, hash_p
                   record_fail, seed_admin, verify_password)
 from db import db, now_ms  # noqa: E402
 from engine import DEFAULT_BOT, get_creds, set_bot, with_exchange  # noqa: E402
-from exchange_service import EXCHANGES, build_client, encrypt, equity_usd, market_order, nonzero_balances, symbol_for  # noqa: E402
+from exchange_service import (ACCOUNTS, EXCHANGES, all_balances, encrypt, friendly, market_order,  # noqa: E402
+                              nonzero_balances, permissions, symbol_for, total_usd, verify)
+import web3bal  # noqa: E402
 from market import SNAPSHOT  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
@@ -246,18 +248,86 @@ async def exchange_connect(body: ExchangeIn, user=Depends(current_user)):
         bad("Unsupported exchange")
     await get_bot(user)
     secret = body.secret.strip().replace("\\n", "\n")
-    ex = build_client(body.exchange, body.api_key.strip(), secret, body.password.strip())
     try:
-        bal = await ex.fetch_balance()
+        bal, host, perms = await verify(body.exchange, body.api_key.strip(), secret, body.password.strip())
     except Exception as e:
-        bad(f"Exchange verification failed: {type(e).__name__}: {str(e)[:220]}")
-    finally:
-        await ex.close()
+        bad(f"Exchange verification failed: {friendly(e)}")
     await db.exchange_credentials.update_one({"user_id": user["id"]}, {"$set": {
-        "user_id": user["id"], "exchange": body.exchange, "api_key": encrypt(body.api_key.strip()),
-        "secret": encrypt(secret), "password": encrypt(body.password.strip()), "created_at": iso_now()}}, upsert=True)
-    await set_bot(user["id"], mode="live", live_equity=equity_usd(bal, SNAPSHOT.get("price") or 0))
-    return {"ok": True, "balances": nonzero_balances(bal)}
+        "user_id": user["id"], "exchange": body.exchange, "api_key": encrypt(body.api_key.strip()), "hostname": host,
+        "secret": encrypt(secret), "password": encrypt(body.password.strip()), "permissions": perms, "created_at": iso_now()}}, upsert=True)
+    await set_bot(user["id"], mode="live")
+    await engine.refresh_live_equity({"user_id": user["id"]})
+    return {"ok": True, "balances": nonzero_balances(bal), "permissions": perms, "hostname": host, "warnings": perm_warnings(perms)}
+
+
+def perm_warnings(perms):
+    if not perms:
+        return []
+    w = []
+    if not perms.get("trade"):
+        w.append("This API key has no TRADE permission, so the bot can't place orders. Edit the key on the exchange and enable Trade.")
+    if not perms.get("withdraw"):
+        w.append("This API key has no WITHDRAW permission, so withdrawals will be rejected.")
+    return w
+
+
+@api.get("/exchange/capabilities")
+async def exchange_capabilities(user=Depends(current_user)):
+    creds = await get_creds(user["id"]) or bad("No exchange connected")
+
+    async def run(ex):
+        perms = await permissions(ex, creds["exchange"])
+        if perms:
+            await db.exchange_credentials.update_one({"user_id": user["id"]}, {"$set": {"permissions": perms}})
+        has = {k: bool(ex.has.get(k)) for k in ("createOrder", "fetchDepositAddress", "withdraw", "transfer", "fetchDeposits", "fetchWithdrawals")}
+        return {"exchange": creds["exchange"], "hostname": creds.get("hostname"), "symbol": symbol_for(creds["exchange"]),
+                "permissions": perms, "has": has, "accounts": ACCOUNTS.get(creds["exchange"]), "warnings": perm_warnings(perms)}
+    return await with_exchange(user["id"], run)
+
+
+@api.post("/exchange/sync")
+async def exchange_sync(user=Depends(current_user)):
+    creds = await get_creds(user["id"]) or bad("No exchange connected")
+
+    async def run(ex):
+        bal = await all_balances(ex, creds["exchange"])
+        eq = total_usd(bal, SNAPSHOT.get("price") or 0)
+        await set_bot(user["id"], live_equity=eq)
+        return {"balances": bal, "equity": eq, "ts": now_ms()}
+    return await with_exchange(user["id"], run)
+
+
+class OrderIn(BaseModel):
+    side: Literal["BUY", "SELL"]
+    usd: Optional[float] = Field(None, gt=0)
+    qty: Optional[float] = Field(None, gt=0)
+
+
+@api.post("/exchange/order")
+async def exchange_order(body: OrderIn, user=Depends(current_user)):
+    creds = await get_creds(user["id"]) or bad("No exchange connected")
+    bot = await get_bot(user)
+    symbol = symbol_for(creds["exchange"])
+
+    async def run(ex):
+        await ex.load_markets()
+        price = (await ex.fetch_ticker(symbol))["last"]
+        if body.side == "BUY":
+            o = await market_order(ex, symbol, "BUY", body.usd or engine.order_usd(bot), 0, price)
+        else:
+            qty = body.qty or float(((await ex.fetch_balance()).get("BTC") or {}).get("free") or 0)
+            if qty <= 0:
+                bad("No BTC in the trading account to sell")
+            o = await market_order(ex, symbol, "SELL", 0, qty, price)
+        return o, price
+
+    o, price = await with_exchange(user["id"], run)
+    avg = float(o.get("average") or price)
+    qty = float(o.get("filled") or 0) or (body.qty or (body.usd or engine.order_usd(bot)) / price)
+    await engine.record_fill(bot, body.side, avg, round(qty, 8), f"LIVE FILLED #{o.get('id')}",
+                             {"action": body.side, "engine": "manual", "confidence": 1.0, "reason": f"manual {body.side} on {creds['exchange']}"})
+    await engine.refresh_live_equity(bot)
+    return {"id": str(o.get("id")), "status": o.get("status"), "filled": qty, "average": avg, "symbol": symbol}
 
 
 @api.post("/exchange/test-order")
@@ -301,28 +371,90 @@ class WithdrawIn(BaseModel):
     currency: str = "BTC"
     amount: float = Field(gt=0)
     address: str
+    network: Optional[str] = None
+    tag: Optional[str] = None
+
+
+class TransferIn(BaseModel):
+    currency: str = "USDT"
+    amount: float = Field(gt=0)
+    direction: Literal["to_trading", "to_funding"] = "to_trading"
 
 
 @api.get("/wallet/real/balance")
 async def wallet_balance(user=Depends(current_user)):
+    creds = await get_creds(user["id"]) or bad("No exchange connected")
+
     async def run(ex):
-        return {"balances": nonzero_balances(await ex.fetch_balance())}
+        b = await all_balances(ex, creds["exchange"])
+        merged = {}
+        for acc in b.values():
+            for k, v in acc.items():
+                merged[k] = merged.get(k, 0) + v
+        return {"balances": merged, "accounts": b}
+    return await with_exchange(user["id"], run)
+
+
+@api.get("/wallet/real/networks")
+async def wallet_networks(currency: str = "BTC", user=Depends(current_user)):
+    async def run(ex):
+        await ex.load_markets()
+        cur = (ex.currencies or {}).get(currency.upper()) or {}
+        return [{"id": k, "withdraw": bool(n.get("withdraw", True)), "deposit": bool(n.get("deposit", True)),
+                 "fee": n.get("fee"), "min": ((n.get("limits") or {}).get("withdraw") or {}).get("min")}
+                for k, n in (cur.get("networks") or {}).items()]
     return await with_exchange(user["id"], run)
 
 
 @api.get("/wallet/real/deposit-address")
-async def wallet_address(currency: str = "BTC", user=Depends(current_user)):
+async def wallet_address(currency: str = "BTC", network: Optional[str] = None, user=Depends(current_user)):
     async def run(ex):
-        a = await ex.fetch_deposit_address(currency)
-        return {"address": a.get("address"), "tag": a.get("tag")}
+        await ex.load_markets()
+        a = await ex.fetch_deposit_address(currency.upper(), {"network": network} if network else {})
+        return {"address": a.get("address"), "tag": a.get("tag"), "network": a.get("network") or network, "currency": currency.upper()}
     return await with_exchange(user["id"], run)
 
 
 @api.post("/wallet/real/withdraw")
 async def wallet_withdraw(body: WithdrawIn, user=Depends(current_user)):
+    params = {"network": body.network} if body.network else {}
+
     async def run(ex):
-        r = await ex.withdraw(body.currency, body.amount, body.address.strip())
-        return {"ok": True, "id": r.get("id")}
+        await ex.load_markets()
+        r = await ex.withdraw(body.currency.upper(), body.amount, body.address.strip(), body.tag or None, params)
+        return {"ok": True, "id": r.get("id"), "status": r.get("status")}
+    res = await with_exchange(user["id"], run)
+    await alerts.notify(await get_bot(user), f"📤 Withdrawal submitted: {body.amount} {body.currency.upper()} → {body.address[:10]}…")
+    return res
+
+
+@api.post("/wallet/real/transfer")
+async def wallet_transfer(body: TransferIn, user=Depends(current_user)):
+    creds = await get_creds(user["id"]) or bad("No exchange connected")
+    acc = ACCOUNTS.get(creds["exchange"]) or bad(f"{creds['exchange']} uses a single account, no transfer needed")
+    src, dst = acc if body.direction == "to_trading" else acc[::-1]
+
+    async def run(ex):
+        await ex.load_markets()
+        r = await ex.transfer(body.currency.upper(), body.amount, src, dst)
+        return {"ok": True, "id": r.get("id"), "from": src, "to": dst}
+    res = await with_exchange(user["id"], run)
+    await engine.refresh_live_equity({"user_id": user["id"]})
+    return res
+
+
+@api.get("/wallet/real/history")
+async def wallet_history(user=Depends(current_user)):
+    async def run(ex):
+        out = []
+        for kind, fn in (("deposit", ex.fetch_deposits), ("withdrawal", ex.fetch_withdrawals)):
+            try:
+                for t in await fn(None, None, 20):
+                    out.append({"type": kind, "currency": t.get("currency"), "amount": t.get("amount"), "status": t.get("status"),
+                                "network": t.get("network"), "address": t.get("address"), "txid": t.get("txid"), "ts": t.get("timestamp")})
+            except Exception:
+                pass
+        return sorted(out, key=lambda x: x["ts"] or 0, reverse=True)
     return await with_exchange(user["id"], run)
 
 
@@ -334,13 +466,18 @@ class Web3In(BaseModel):
 
 @api.get("/wallet/web3")
 async def web3_list(user=Depends(current_user)):
-    return await db.web3_wallets.find({"user_id": user["id"]}, {"_id": 0, "user_id": 0}).to_list(20)
+    rows = await db.web3_wallets.find({"user_id": user["id"]}, {"_id": 0, "user_id": 0}).to_list(20)
+    bals = await asyncio.gather(*[web3bal.balance(w["chain"], w["address"]) for w in rows])
+    for w, b in zip(rows, bals):
+        w["balance"] = b
+        w["usd"] = round(b * (SNAPSHOT.get("price") if w["chain"] == "btc" else SNAPSHOT.get("eth") or 0), 2) if b is not None else None
+    return rows
 
 
 @api.post("/wallet/web3/link")
 async def web3_link(body: Web3In, user=Depends(current_user)):
     await db.web3_wallets.update_one({"user_id": user["id"], "address": body.address.strip()},
-                                     {"$set": {**body.model_dump(), "address": body.address.strip(), "balance": None}}, upsert=True)
+                                     {"$set": {**body.model_dump(), "address": body.address.strip()}}, upsert=True)
     return {"ok": True}
 
 

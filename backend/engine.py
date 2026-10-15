@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import alerts
 import brokers
 from db import db, now_ms
-from exchange_service import client_from_doc, equity_usd, market_order, symbol_for
+from exchange_service import all_balances, client_from_doc, friendly, market_order, symbol_for, total_usd
 from market import SNAPSHOT
 
 START_CASH = 10000.0
@@ -36,7 +36,7 @@ async def with_exchange(uid: str, fn):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(400, f"{type(e).__name__}: {str(e)[:240]}")
+        raise HTTPException(400, friendly(e))
     finally:
         await ex.close()
 
@@ -135,7 +135,7 @@ async def execute(bot: dict, d: dict):
         qty = float(o.get("filled") or 0) or (order_usd(bot) / price if side == "BUY" else bot["position_qty"])
         await record_fill(bot, side, avg, round(qty, 8), f"LIVE FILLED #{o.get('id')}", d)
     except Exception as e:
-        await log(db, bot["user_id"], {**d, "reason": f"{d['reason']} · order error: {type(e).__name__}: {str(e)[:120]}"}, price, "REJECTED")
+        await log(db, bot["user_id"], {**d, "reason": f"{d['reason']} · order error: {friendly(e)[:160]}"}, price, "REJECTED")
     finally:
         await ex.close()
 
@@ -146,8 +146,8 @@ async def refresh_live_equity(bot: dict):
         return
     ex = client_from_doc(creds)
     try:
-        bal = await ex.fetch_balance()
-        await set_bot(bot["user_id"], live_equity=equity_usd(bal, SNAPSHOT.get("price") or 0))
+        bal = await all_balances(ex, creds["exchange"])
+        await set_bot(bot["user_id"], live_equity=total_usd(bal, SNAPSHOT.get("price") or 0))
     except Exception as e:
         log_.warning("live equity failed: %s", e)
     finally:
