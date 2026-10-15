@@ -135,25 +135,63 @@ async def auto_fund(ex, uid: str, exchange: str, symbol: str, side: str, usd: fl
                             "reason": f"Auto-fund: moved {moved} {cur} funding → trading"}, SNAPSHOT.get("price"), "TRANSFER")
 
 
+async def wait_log(uid: str, bot: dict, reason: str):
+    if time.time() - bot.get("last_wait_log", 0) < 300:
+        return
+    await set_bot(uid, last_wait_log=time.time())
+    await log(db, uid, {"action": "HOLD", "engine": "fund", "confidence": 1.0, "reason": reason}, SNAPSHOT.get("price"), "WAITING")
+
+
+async def free_of(ex, cur: str) -> float:
+    return float(((await ex.fetch_balance()).get(cur) or {}).get("free") or 0)
+
+
 async def execute(bot: dict, d: dict):
     side, price = d["action"], SNAPSHOT["price"]
     if bot["mode"] != "live":
         qty = round(order_usd(bot) / price, 6) if side == "BUY" else bot["position_qty"]
         return await record_fill(bot, side, price, qty, "PAPER FILLED", d)
-    creds = await get_creds(bot["user_id"])
+    uid = bot["user_id"]
+    creds = await get_creds(uid)
     ex = client_from_doc(creds)
     try:
         symbol = await resolve_symbol(ex, creds["exchange"])
-        await auto_fund(ex, bot["user_id"], creds["exchange"], symbol, side, order_usd(bot), bot["position_qty"], bot.get("auto_fund", True))
+        quote = symbol.split("/")[1]
+        usd = order_usd(bot)
+        await auto_fund(ex, uid, creds["exchange"], symbol, side, usd, bot["position_qty"], bot.get("auto_fund", True))
         price = (await ex.fetch_ticker(symbol))["last"] or price
-        o = await market_order(ex, symbol, side, order_usd(bot), bot["position_qty"], price)
-        avg = float(o.get("average") or price)
-        qty = float(o.get("filled") or 0) or (order_usd(bot) / price if side == "BUY" else bot["position_qty"])
-        await record_fill(bot, side, avg, round(qty, 8), f"LIVE FILLED #{o.get('id')}", d)
+        min_qty = float(((ex.market(symbol).get("limits") or {}).get("amount") or {}).get("min") or 0)
+        if side == "BUY":
+            have = await free_of(ex, quote)
+            if have < usd:
+                return await wait_log(uid, bot, f"BUY signal skipped · need {usd} {quote} in trading, have {round(have, 4)}. Deposit {quote}/USDC, or hold BTC so the bot can trade it on SELL signals.")
+            if usd / price < min_qty:
+                return await wait_log(uid, bot, f"BUY signal skipped · ${usd} is below the {symbol} minimum ({min_qty} BTC ≈ ${round(min_qty * price, 2)}). Raise POSITION SIZE.")
+            o = await market_order(ex, symbol, "BUY", usd, 0, price)
+            qty = float(o.get("filled") or 0) or usd / price
+        else:
+            qty = min(bot["position_qty"], await free_of(ex, "BTC"))
+            if qty < max(min_qty, 1e-8):
+                return await wait_log(uid, bot, f"SELL signal skipped · only {qty} BTC free in trading (minimum {min_qty}). Waiting for deposit to credit.")
+            o = await market_order(ex, symbol, "SELL", 0, qty, price)
+            qty = float(o.get("filled") or 0) or qty
+        await record_fill(bot, side, float(o.get("average") or price), round(qty, 8), f"LIVE FILLED #{o.get('id')}", d)
     except Exception as e:
-        await log(db, bot["user_id"], {**d, "reason": f"{d['reason']} · order error: {friendly(e)[:160]}"}, price, "REJECTED")
+        await log(db, uid, {**d, "reason": f"{d['reason']} · order error: {friendly(e)[:160]}"}, price, "REJECTED")
     finally:
         await ex.close()
+
+
+async def sync_position(bot: dict, bal: dict):
+    price = SNAPSHOT.get("price") or 0
+    btc = sum(float(b.get("BTC") or 0) for b in bal.values())
+    uid = bot["user_id"]
+    if bot.get("position_qty", 0) <= 0 and btc >= 1e-5:
+        await set_bot(uid, position_qty=round(btc, 8), entry_price=price)
+        await log(db, uid, {"action": "HOLD", "engine": "sync", "confidence": 1.0,
+                            "reason": f"Synced position: {round(btc, 8)} BTC on exchange · entry set to ${price:,.2f} (P&L counted from now)"}, price, "SYNCED")
+    elif bot.get("position_qty", 0) > 0 and btc < bot["position_qty"] * 0.5:
+        await set_bot(uid, position_qty=round(btc, 8) if btc >= 1e-5 else 0.0, entry_price=bot["entry_price"] if btc >= 1e-5 else 0.0)
 
 
 async def refresh_live_equity(bot: dict):
@@ -164,6 +202,8 @@ async def refresh_live_equity(bot: dict):
     try:
         bal = await all_balances(ex, creds["exchange"])
         await set_bot(bot["user_id"], live_equity=total_usd(bal, SNAPSHOT.get("price") or 0))
+        if "position_qty" in bot:
+            await sync_position(bot, bal)
     except Exception as e:
         log_.warning("live equity failed: %s", e)
     finally:
@@ -177,6 +217,7 @@ async def tick_bot(bot: dict):
     await set_bot(uid, last_tick=time.time())
     if bot["mode"] == "live":
         await refresh_live_equity(bot)
+        bot = await db.bots.find_one({"user_id": uid})
     if bot.get("pending"):
         return
     d = signal(bot)

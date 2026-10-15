@@ -32,6 +32,7 @@ OKX_ERRORS = {
     "50113": "OKX rejected the signature. The API secret is wrong; copy it again.",
     "50110": "Your OKX key only allows certain IPs. Edit the key on OKX and turn off Trusted IP access.",
     "50111": "OKX API key is invalid. Copy it again.",
+    "51008": "Not enough balance on OKX for this order.",
 }
 ACCOUNTS = {"okx": ("funding", "trading"), "binance": ("funding", "spot"), "bybit": ("funding", "unified"),
             "kucoin": ("main", "trade"), "bitget": ("funding", "spot"), "gateio": ("funding", "spot"), "mexc": ("funding", "spot")}
@@ -52,8 +53,9 @@ def client_from_doc(doc: dict):
 
 def friendly(e: Exception) -> str:
     s = str(e)
+    flat = s.replace(" ", "").lower()
     for code, msg in OKX_ERRORS.items():
-        if f'"code":"{code}"' in s.replace(" ", ""):
+        if f'code":"{code}"' in flat:
             return f"{msg} (OKX {code})"
     return f"{type(e).__name__}: {s[:220]}"
 
