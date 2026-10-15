@@ -1,0 +1,39 @@
+{
+  "summary": "Full backend + frontend regression for Frasberg | Luchii Trading Bot clone. 31/31 pytest API tests pass. All UI flows exercised: admin login, operator registration, dashboard panels (ACTIVE ENGINE, PNL, candle chart, MINOFISH, ORDER BOOK, RECENT, ANALYTICS, EXECUTION LOG, #1 TRADER), REAL badge + live BTC/ETH header prices, START toast guard, KILL + RE-ARM, RESET, Settings modal (config/guardrails/brokers/alerts/wallet/exchange), EXCHANGE list has 15 exchanges in exact order with passphrase field only for okx/kucoin/bitget, fake kraken/okx keys produce 'Exchange verification failed' toast, WALLET tab shows REAL WALLET + self-custody + payment apps, ALERTS set with chat ID saves, BROKERS tab has PocketOption form (bogus ssid rejected), /chat shows all three Luchii models and returns 'temporarily unavailable' assistant reply (503 by design, no LLM key), /help /company /info/capabilities load, contact form submits, theme toggle flips the html.light class, title and 2026 footer verified, no forbidden brand words (Claude/Anthropic/Sonnet/Emergent) in rendered text.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/exchange/connect (kraken)", "issue": "With obviously-fake keys ccxt raises a base64 decode error from secret parsing BEFORE the HTTP auth call, so the toast reads 'Exchange verification failed: Error: Invalid base64-encoded string...' instead of 'AuthenticationError...'. The 400+error-wrapping behaviour is correct and the prefix matches spec; only the inner error class name differs."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Optional: when kraken/okx/kucoin secret is not base64, catch cryptography/base64 errors in exchange_service.build_client and re-raise as AuthenticationError-style message for consistency with spec wording."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 587 lines — close to the 700 line limit, consider splitting routers (auth / bot / exchange / wallet / brokers / chat) into separate files to keep it maintainable.",
+    "CORS is wide open (allow_origins=*, allow_credentials=False). Acceptable but tighten in prod.",
+    "db.py presumably reads MONGO_URL at import time — ensure load_dotenv runs first (server.py does this correctly).",
+    "/api/chat/message always returns 503 by design (user declined LLM key). Function signature still accepts ChatIn and reads `user` but neither is used; that is intentional for the stub.",
+    "exchange_service.build_client passes raw ccxt timeouts but no explicit sandbox flag — fine for live-only."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py (new)",
+    "/app/test_reports/pytest/pytest_results.xml (new)"
+  ],
+  "success_rate": {"backend": "100% (31/31)", "frontend": "100% (all critical flows verified)"},
+  "test_credentials": "admin@gravia.io / Gravia@2026 (confirmed working, role=admin). Registered throwaway TEST_* users during run (not deleted; no admin cleanup endpoint).",
+  "seed_data_creation": "Admin user is auto-seeded by auth.seed_admin on startup. A handful of TEST_<uuid>@example.com operators were created via /api/auth/register for test isolation.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend test file at /app/backend/tests/backend_test.py covers health, auth, bot CRUD/state, exchange guards, wallet web3 link/unlink, alerts, brokers, chat/help offline (503), contact, leaderboard. Use the same TEST_ email prefix convention. Dashboard testids live on BotStatusCard (bot-start-button, bot-kill-button, rearm-button, bot-reset-button, bot-equity), Header (open-settings-button, theme-toggle-button, open-chat-button, open-help-button, logout-button), SettingsModal (settings-tab-select is a <select>, not tab buttons; options: config/guardrails/brokers/alerts/wallet/exchange). Chat uses chat-input + chat-send-button. Expect chat-message-assistant to say 'Luchii is temporarily unavailable…' (503 by design, no LLM key).",
+  "rca of the issue": "No defects found. Only minor cosmetic mismatch: kraken fake-key error says 'Invalid base64-encoded string' rather than 'AuthenticationError'. Root cause: ccxt.kraken decodes the secret as base64 at request-signing time; invalid base64 raises binascii.Error before any HTTP call. Mitigation (optional): wrap base64/decrypt failures in exchange_service and re-raise as ccxt.AuthenticationError, or special-case the toast prefix. User impact is nil — the user still gets a 400 with 'Exchange verification failed: …' and nothing is persisted."
+}
