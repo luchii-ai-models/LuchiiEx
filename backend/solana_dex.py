@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import logging
 import os
 import time
 
@@ -50,8 +51,66 @@ async def import_wallet(uid: str, secret: str) -> str:
     pub = str(kp.pubkey())
     await db.solana_wallets.update_one({"user_id": uid}, {"$set": {
         "user_id": uid, "pubkey": pub, "secret_enc": encrypt(secret.strip()), "created_at": now_ms()},
-        "$setOnInsert": {"tokens": [], "amount_sol": 0.05, "enabled": False, "slippage_bps": 300}}, upsert=True)
+        "$setOnInsert": {"tokens": [], "amount_sol": 0.05, "enabled": False, "slippage_bps": 300,
+                         "token_tp_pct": 25.0, "token_sl_pct": 15.0, "token_cfg": {}, "positions": {}}}, upsert=True)
     return pub
+
+
+async def prices(mints: list) -> dict:
+    if not mints:
+        return {}
+    async with httpx.AsyncClient(timeout=10) as c:
+        r = await c.get(f"{JUP}/price/v3", params={"ids": ",".join(mints)})
+    return {m: float(v["usdPrice"]) for m, v in r.json().items() if v and v.get("usdPrice")}
+
+
+def token_targets(w: dict, mint: str) -> tuple:
+    cfg = (w.get("token_cfg") or {}).get(mint) or {}
+    tp = cfg.get("tp_pct", w.get("token_tp_pct", 25.0))
+    sl = cfg.get("sl_pct", w.get("token_sl_pct", 15.0))
+    return float(tp or 0), float(sl or 0)
+
+
+async def set_position(uid: str, mint: str, pos):
+    await db.solana_wallets.update_one({"user_id": uid}, {"$set" if pos else "$unset": {f"positions.{mint}": pos or ""}})
+
+
+async def watcher():
+    from engine import log, SNAPSHOT
+    while True:
+        await asyncio.sleep(5)
+        try:
+            wallets = [w async for w in db.solana_wallets.find({"positions": {"$nin": [None, {}]}}, {"_id": 0})]
+            mints = sorted({m for w in wallets for m in (w.get("positions") or {})})
+            if not mints:
+                continue
+            px = await prices(mints)
+            for w in wallets:
+                for mint, pos in (w.get("positions") or {}).items():
+                    p, entry = px.get(mint), float(pos.get("entry_usd") or 0)
+                    if not p or not entry:
+                        continue
+                    move = (p - entry) / entry * 100
+                    tp, sl = token_targets(w, mint)
+                    hit = "TAKE PROFIT" if tp and move >= tp else ("STOP LOSS" if sl and move <= -sl else None)
+                    if not hit:
+                        continue
+                    try:
+                        bal = await balances(w["pubkey"])
+                        raw = (bal["tokens"].get(mint) or {}).get("raw", 0)
+                        if raw <= 0:
+                            await set_position(w["user_id"], mint, None)
+                            continue
+                        res = await swap(w["user_id"], mint, SOL, raw)
+                        await log(db, w["user_id"], {"action": "SELL", "engine": "solana", "confidence": 1.0,
+                                                     "reason": f"{hit} {mint[:6]}… {move:+.1f}% (entry ${entry:.6g} → ${p:.6g}) · {res['status']}"},
+                                  SNAPSHOT.get("price") or 0, f"SOL #{res['sig'][:10]}")
+                    except Exception as e:
+                        await log(db, w["user_id"], {"action": "SELL", "engine": "solana", "confidence": 1.0,
+                                                     "reason": f"{hit} {mint[:6]}… {move:+.1f}% but sell failed: {str(e)[:120]}"},
+                                  SNAPSHOT.get("price") or 0, "REJECTED")
+        except Exception as e:
+            logging.getLogger("solana").warning("watcher: %s", e)
 
 
 async def balances(pubkey: str) -> dict:
@@ -121,6 +180,15 @@ async def swap(uid: str, in_mint: str, out_mint: str, amount: int) -> dict:
     await db.solana_swaps.insert_one({"user_id": uid, "ts": now_ms(), "in_mint": in_mint, "out_mint": out_mint, **res})
     if status == "failed":
         raise RuntimeError(f"swap failed on-chain · {sig[:12]}…")
+    if in_mint == SOL:
+        p = (await prices([out_mint])).get(out_mint)
+        prev = (w.get("positions") or {}).get(out_mint) or {}
+        old_raw, old_entry = int(prev.get("raw") or 0), float(prev.get("entry_usd") or 0)
+        new_raw = old_raw + res["out_amount"]
+        entry = ((old_raw * old_entry) + res["out_amount"] * (p or old_entry)) / new_raw if new_raw and (p or old_entry) else p
+        await set_position(uid, out_mint, {"entry_usd": entry, "raw": new_raw, "ts": now_ms()})
+    elif out_mint == SOL:
+        await set_position(uid, in_mint, None)
     return res
 
 

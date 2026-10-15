@@ -651,11 +651,19 @@ class SolImportIn(BaseModel):
     secret: str = Field(..., min_length=20)
 
 
+class TokenCfg(BaseModel):
+    tp_pct: Optional[float] = Field(None, ge=0, le=10000)
+    sl_pct: Optional[float] = Field(None, ge=0, le=100)
+
+
 class SolConfigIn(BaseModel):
     tokens: Optional[list[str]] = Field(None, max_length=5)
     amount_sol: Optional[float] = Field(None, gt=0)
     slippage_bps: Optional[int] = Field(None, ge=10, le=5000)
     enabled: Optional[bool] = None
+    token_tp_pct: Optional[float] = Field(None, ge=0, le=10000)
+    token_sl_pct: Optional[float] = Field(None, ge=0, le=100)
+    token_cfg: Optional[dict[str, TokenCfg]] = None
 
 
 class SolSwapIn(BaseModel):
@@ -670,9 +678,17 @@ async def sol_view(user) -> dict:
     out = {k: v for k, v in w.items() if k != "secret_enc"}
     out["connected"] = True
     try:
-        bal, info = await asyncio.gather(solana_dex.balances(w["pubkey"]), solana_dex.token_info(w.get("tokens") or []))
+        bal, info, px = await asyncio.gather(solana_dex.balances(w["pubkey"]), solana_dex.token_info(w.get("tokens") or []),
+                                             solana_dex.prices(w.get("tokens") or []))
         out["sol_balance"] = bal["sol"]
-        out["token_balances"] = {m: {**(bal["tokens"].get(m) or {"ui": 0.0, "raw": 0}), **info.get(m, {})} for m in w.get("tokens") or []}
+        out["token_balances"] = {}
+        for m in w.get("tokens") or []:
+            pos = (w.get("positions") or {}).get(m) or {}
+            tp, sl = solana_dex.token_targets(w, m)
+            entry, p = float(pos.get("entry_usd") or 0), px.get(m)
+            out["token_balances"][m] = {**(bal["tokens"].get(m) or {"ui": 0.0, "raw": 0}), **info.get(m, {}), "price": p,
+                                        "entry_usd": entry or None, "move_pct": round((p - entry) / entry * 100, 2) if p and entry else None,
+                                        "tp_pct": tp, "sl_pct": sl}
     except Exception as e:
         out["error"] = str(e)[:160]
     return out
@@ -705,6 +721,10 @@ async def sol_config(body: SolConfigIn, user=Depends(current_user)):
     upd = body.model_dump(exclude_none=True)
     if "tokens" in upd:
         upd["tokens"] = list(dict.fromkeys(t.strip() for t in upd["tokens"] if 32 <= len(t.strip()) <= 44))
+    if "token_cfg" in upd:
+        for m, c in upd.pop("token_cfg").items():
+            if 32 <= len(m) <= 44:
+                upd[f"token_cfg.{m}"] = {k: v for k, v in c.items() if v is not None}
     if upd:
         await db.solana_wallets.update_one({"user_id": user["id"]}, {"$set": upd})
     return await sol_view(user)
@@ -842,3 +862,4 @@ async def startup():
     await db.bot_pnl.create_index([("user_id", 1), ("ts", -1)])
     asyncio.create_task(market.loop())
     asyncio.create_task(engine.scheduler())
+    asyncio.create_task(solana_dex.watcher())

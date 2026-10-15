@@ -17,6 +17,20 @@ const Btn = ({ children, color = "neon-magenta", ...p }) => (
 );
 const err = (e) => toast.error(formatApiErrorDetail(e.response?.data?.detail) || "Request failed");
 
+function TokenTargets({ mint, t, cfg }) {
+  const [open, setOpen] = useState(false);
+  const [tp, setTp] = useState(t.tp_pct ?? 25);
+  const [sl, setSl] = useState(t.sl_pct ?? 15);
+  if (!open) return <button data-testid={`solana-token-targets-${mint}`} onClick={() => setOpen(true)} className="text-[9px] text-neon-magenta tracking-[0.15em] mt-1">OVERRIDE TP/SL</button>;
+  return (
+    <div className="grid grid-cols-3 gap-2 mt-2 items-end">
+      <Input data-testid={`solana-token-tp-${mint}`} type="number" min="0" value={tp} onChange={(e) => setTp(e.target.value)} placeholder="TP %" />
+      <Input data-testid={`solana-token-sl-${mint}`} type="number" min="0" max="100" value={sl} onChange={(e) => setSl(e.target.value)} placeholder="SL %" />
+      <Btn data-testid={`solana-token-save-${mint}`} onClick={() => { cfg({ token_cfg: { [mint]: { tp_pct: Number(tp), sl_pct: Number(sl) } } }); setOpen(false); }}>SET</Btn>
+    </div>
+  );
+}
+
 export default function SolanaTab() {
   const [w, setW] = useState(null);
   const load = () => api.get("/solana/wallet").then((r) => setW(r.data)).catch(() => setW({ connected: false }));
@@ -49,6 +63,8 @@ function SolImport({ reload }) {
 function SolWallet({ w, reload }) {
   const [amount, setAmount] = useState(w.amount_sol ?? 0.05);
   const [slip, setSlip] = useState(w.slippage_bps ?? 300);
+  const [tp, setTp] = useState(w.token_tp_pct ?? 25);
+  const [sl, setSl] = useState(w.token_sl_pct ?? 15);
   const [enabled, setEnabled] = useState(!!w.enabled);
   const [q, setQ] = useState("");
   const [hits, setHits] = useState([]);
@@ -84,8 +100,11 @@ function SolWallet({ w, reload }) {
       <div className="grid grid-cols-2 gap-4">
         <div><Label>SOL PER BUY</Label><Input data-testid="solana-amount-input" type="number" step="0.01" min="0.001" value={amount} onChange={(e) => setAmount(e.target.value)} /></div>
         <div><Label>SLIPPAGE (BPS)</Label><Input data-testid="solana-slippage-input" type="number" min="10" max="5000" value={slip} onChange={(e) => setSlip(e.target.value)} /></div>
+        <div><Label>TOKEN TAKE PROFIT (%)</Label><Input data-testid="solana-tp-input" type="number" step="1" min="0" value={tp} onChange={(e) => setTp(e.target.value)} /></div>
+        <div><Label>TOKEN STOP LOSS (%)</Label><Input data-testid="solana-sl-input" type="number" step="1" min="0" max="100" value={sl} onChange={(e) => setSl(e.target.value)} /></div>
       </div>
-      <Btn data-testid="solana-save-button" onClick={() => cfg({ amount_sol: Number(amount), slippage_bps: Number(slip) })}>SAVE</Btn>
+      <p className="text-[9px] text-term-muted -mt-3">Token prices are checked every 5s. A hit sells that token back to SOL on its own, independent of the BTC bot. Override per token below.</p>
+      <Btn data-testid="solana-save-button" onClick={() => cfg({ amount_sol: Number(amount), slippage_bps: Number(slip), token_tp_pct: Number(tp), token_sl_pct: Number(sl) })}>SAVE</Btn>
 
       <div>
         <Label>TOKENS TO TRADE ({tokens.length}/5)</Label>
@@ -98,6 +117,13 @@ function SolWallet({ w, reload }) {
                 <button data-testid={`solana-token-remove-${m}`} onClick={() => cfg({ tokens: tokens.filter((x) => x !== m) })} className="text-term-muted hover:text-neon-red"><Trash2 size={12} /></button>
               </div>
               <div className="flex justify-between text-[10px] text-term-muted mt-1"><span className="font-mono">{m.slice(0, 10)}…{m.slice(-6)}</span><span>bal {t.ui ?? 0} {t.price ? `· $${Number(t.price).toPrecision(3)}` : ""}</span></div>
+              {t.entry_usd ? (
+                <div data-testid={`solana-pos-${m}`} className="flex justify-between text-[10px] mt-1">
+                  <span className="text-term-muted">entry ${Number(t.entry_usd).toPrecision(3)}</span>
+                  <span className={t.move_pct >= 0 ? "text-neon-green" : "text-neon-red"}>{t.move_pct != null ? `${t.move_pct >= 0 ? "+" : ""}${t.move_pct}%` : "—"} · TP +{t.tp_pct}% / SL −{t.sl_pct}%</span>
+                </div>
+              ) : <div className="text-[10px] text-term-muted mt-1">no open position · TP +{t.tp_pct}% / SL −{t.sl_pct}%</div>}
+              <TokenTargets mint={m} t={t} cfg={cfg} />
               <div className="grid grid-cols-2 gap-2 mt-2">
                 <Btn color="neon-green" data-testid={`solana-buy-${m}`} disabled={!!busy} onClick={() => swap(m, "BUY")}>{busy === m + "BUY" ? "SWAPPING…" : `BUY ${w.amount_sol} SOL`}</Btn>
                 <Btn color="neon-red" data-testid={`solana-sell-${m}`} disabled={!!busy || !(t.raw > 0)} onClick={() => swap(m, "SELL")}>{busy === m + "SELL" ? "SWAPPING…" : "SELL ALL"}</Btn>
