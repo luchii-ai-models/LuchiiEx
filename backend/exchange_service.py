@@ -1,3 +1,4 @@
+import asyncio
 import os
 
 import ccxt.async_support as ccxt
@@ -157,6 +158,14 @@ def equity_usd(bal: dict, price: float) -> float:
 async def market_order(ex, symbol: str, side: str, usd: float, qty: float, price: float) -> dict:
     if side == "BUY":
         amount = float(ex.amount_to_precision(symbol, usd / price))
-        return await ex.create_order(symbol, "market", "buy", amount, price)
-    amount = float(ex.amount_to_precision(symbol, qty))
-    return await ex.create_order(symbol, "market", "sell", amount)
+        o = await ex.create_order(symbol, "market", "buy", amount, price)
+    else:
+        amount = float(ex.amount_to_precision(symbol, qty))
+        o = await ex.create_order(symbol, "market", "sell", amount)
+    if not o.get("average") and o.get("id"):
+        try:
+            await asyncio.sleep(1)
+            o = {**o, **{k: v for k, v in (await ex.fetch_order(o["id"], symbol)).items() if v is not None}}
+        except Exception:
+            pass
+    return o
