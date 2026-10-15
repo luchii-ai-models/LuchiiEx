@@ -29,6 +29,10 @@ User choices: copy from trade-bridge-73; use the env values exactly; no Emergent
 - Wallet tab: balances per account, deposit address per coin and network, funding⇄trading transfer, withdraw with network, fee and memo, and deposit/withdrawal history.
 - Self-custody wallets show real balances (mempool.space / public ETH RPC) and offer SEND TO EXCHANGE, which the user signs in OKX Wallet, MetaMask or Coinbase Wallet.
 
+- Engine now checks the balance and minimum order size before each order (one throttled WAITING log line instead of rejected spam), syncs BTC held on the exchange as a position, and reads the real average fill price back from OKX after each order.
+- First real OKX fill confirmed: SELL 0.000111 BTC/USDT @ 80,658.90 (order 4012130822437031936).
+- P&L chart starts from the real exchange balance (start_equity/start_ts on the bot) instead of $10,000. get_bot creates the bot with an upsert, so parallel first requests no longer cause duplicate-key 500s.
+
 ## Known limits
 - Live order placement has not been tested with real keys
 - Some exchanges reject fake secrets with a decode error before the auth call; this is still shown as "Exchange verification failed: …"

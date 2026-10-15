@@ -90,7 +90,7 @@ async def get_bot(user) -> dict:
         return bot
     n = await db.bots.count_documents({}) + 1
     doc = {**DEFAULT_BOT, "user_id": user["id"], "name": f"Luchii_{n:03d}", "created_at": iso_now()}
-    await db.bots.insert_one(doc)
+    await db.bots.update_one({"user_id": user["id"]}, {"$setOnInsert": doc}, upsert=True)
     return await db.bots.find_one({"user_id": user["id"]})
 
 

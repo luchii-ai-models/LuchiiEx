@@ -1,0 +1,39 @@
+{
+  "summary": "Iter 5 (Real Starting Balance): wrote /app/backend/tests/test_iteration5_start_equity.py (7 tests) + UI check on dashboard with a fresh TEST_ user. 6/7 backend tests pass. PnlChart no longer shows hardcoded $10,000 — new TEST_ user sees 'START $0.00 / NOW $0.00 / +$0.00'. refresh_live_equity unit test verified first call sets start_equity=8.94 & start_ts, second call with equity 9.5 preserves start_equity=8.94 and only updates live_equity. /api/bot/reset correctly sets start_equity=live_equity (or null when none). /api/exchange/disconnect clears start_equity/start_ts/live_equity. /api/bot/pnl correctly filters points with ts<start_ts when start_ts set. One real backend bug surfaced: GET /api/bot/state does NOT include the start_equity key for a brand-new user because DEFAULT_BOT lacks the field and bot_view only spreads existing keys. UI gracefully handles it via `bot?.start_equity ?? data[0]?.equity ?? 0`, but the API contract in the spec is violated. Also found a race-condition bug in get_bot (duplicate key error on concurrent first requests). Did NOT touch user_id 6ad0c885f4fa421663189000 (real OKX customer).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/bot/state", "issue": "`start_equity` key is missing from response for a brand-new user (DEFAULT_BOT does not include start_equity, so bot_view's spread does not emit it). Spec requires start_equity to be present as null. Fix: add `start_equity: None, start_ts: None` to DEFAULT_BOT (engine.py) OR force-include them in bot_view (server.py)."},
+      {"endpoint": "GET /api/bot/state and others on first hit", "issue": "Race condition in get_bot (server.py): when the dashboard fires several parallel requests for a user that has no bot doc yet, each coroutine passes the `if bot` check and attempts insert_one, causing `pymongo.errors.DuplicateKeyError: E11000 ... bots index: user_id_1`. Visible in backend.err.log and surfaces as 500 responses on 1-2 of the initial calls (observed in browser console). Fix: use upsert ($setOnInsert) or wrap insert in try/except DuplicateKeyError and re-fetch."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration5_start_equity.py",
+    "/app/test_reports/pytest/iter5.xml"
+  ],
+  "action_items": [
+    "Include start_equity (and start_ts) keys in GET /api/bot/state response — add to DEFAULT_BOT or explicitly in bot_view so new users get `start_equity: null` as per spec.",
+    "Fix race condition in server.get_bot: initial concurrent requests race to insert the bot doc and trigger DuplicateKeyError 500s. Use `db.bots.update_one({user_id}, {\\\"$setOnInsert\\\": doc}, upsert=True)` then find_one."
+  ],
+  "critical_code_review_comments": [
+    "engine.refresh_live_equity re-reads start_equity from DB before setting (`fresh.get('start_equity')`), which correctly prevents overwriting after the first non-zero equity — good.",
+    "bot_reset uses `bot.get('live_equity') or None` so a stale 0.0 live_equity would become None — intended behavior; verified.",
+    "server.get_bot has a TOCTOU race (described above).",
+    "PnlChart handles missing bot.start_equity gracefully via `?? data[0]?.equity ?? 0`, keeping UI resilient even if backend omits the key."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration5_start_equity.py (new)"
+  ],
+  "success_rate": {"backend": "86% (6/7)", "frontend": "100% (PNL panel verified)"},
+  "test_credentials": "admin@gravia.io / Gravia@2026 (not used — fresh TEST_ users registered via /api/auth/register).",
+  "seed_data_creation": "Transient TEST_startequity_* and TEST_ui_startequity_* users created during tests; cleanup performed (TEST_ user count verified = 0 after run).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "After main agent fixes (1) adding start_equity/start_ts to DEFAULT_BOT or bot_view, and (2) upsert-based race fix in get_bot, re-run `pytest backend/tests/test_iteration5_start_equity.py -v`. All 7 should pass. Real OKX user 6ad0c885f4fa421663189000 was not touched (read-only requirement respected — no API calls made against that account).",
+  "rca_of_the_issue": "start_equity missing from /api/bot/state: DEFAULT_BOT dict in engine.py does not define `start_equity`/`start_ts`, and bot_view in server.py only iterates over existing bot keys. For a user who has never connected an exchange, `refresh_live_equity` is never called (early-returns on missing creds), so `start_equity` is never written to the doc and therefore absent in the API response. Reproduction: register a new user → GET /api/bot/state → response has no `start_equity` key. Mitigation: add `start_equity: None, start_ts: None` to DEFAULT_BOT so the field is always serialized."
+}

@@ -17,7 +17,7 @@ DEFAULT_BOT = {
     "status": "stopped", "mode": "live", "position_usd": 50.0, "max_order_usd": 0.0, "daily_loss_limit": 0.0,
     "manual_confirm": False, "kill_switch": False, "cash": START_CASH, "position_qty": 0.0, "entry_price": 0.0,
     "realized_pnl": 0.0, "trades_count": 0, "wins": 0, "losses": 0, "alerts_enabled": True, "live_equity": None,
-    "last_tick": 0, "pocketoption": None, "auto_fund": True,
+    "last_tick": 0, "pocketoption": None, "auto_fund": True, "start_equity": None, "start_ts": None,
 }
 
 
