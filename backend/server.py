@@ -130,6 +130,19 @@ class ConfigIn(BaseModel):
     strategy: Optional[Literal["luchii003", "aggressive"]] = None
 
 
+@api.get("/strategy/gate")
+async def strategy_gate(user=Depends(current_user)):
+    import gates
+    bot = await get_bot(user)
+    return await gates.evaluate(user["id"], bot.get("strategy", "luchii003"))
+
+
+@api.get("/strategy/stats")
+async def strategy_stats(user=Depends(current_user)):
+    import gates
+    return await gates.rolling(user["id"])
+
+
 @api.get("/strategy/metrics")
 async def strategy_metrics(user=Depends(current_user)):
     bot = await get_bot(user)

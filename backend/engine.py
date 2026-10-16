@@ -194,7 +194,8 @@ async def record_fill(bot: dict, side: str, price: float, qty: float, fill: str,
         if bot["mode"] != "live":
             upd["cash"] = bot["cash"] + qty * price
     await set_bot(uid, **upd)
-    await db.bot_trades.insert_one({"user_id": uid, "ts": now_ms(), "side": side, "asset": asset, "price": price, "qty": qty, "pnl": pnl})
+    await db.bot_trades.insert_one({"user_id": uid, "ts": now_ms(), "side": side, "asset": asset, "price": price, "qty": qty, "pnl": pnl,
+                                    "strategy": bot.get("strategy", "luchii003")})
     await log(db, uid, d, price, fill, asset)
     await alerts.notify(bot, f"{'🟢' if side == 'BUY' else '🔴'} {side} {qty} {asset} @ ${price:,.2f}" + (f" · P&L {pnl:+.2f}" if side == "SELL" else ""))
     bot = await db.bots.find_one({"user_id": uid})
@@ -385,6 +386,12 @@ async def tick_bot(bot: dict):
             await alerts.notify(bot, f"⏳ Confirm {d['action']} {asset} @ ${price:,.2f} in the terminal")
             break
         else:
+            if d["action"] == "BUY":
+                import gates
+                ok, g = await gates.allows_entry(uid, bot.get("strategy", "luchii003"))
+                if not ok:
+                    await wait_log(uid, bot, f"{d['reason']} · ENTRY BLOCKED · strategy gate {g['state']} ({g['reason']}) · exits still managed")
+                    continue
             await execute(bot, d, asset)
             bot = await db.bots.find_one({"user_id": uid})
     bot = await db.bots.find_one({"user_id": uid})

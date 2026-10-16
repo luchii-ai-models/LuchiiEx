@@ -8,6 +8,7 @@ import CandleChart from "../components/terminal/CandleChart";
 import OrderBook from "../components/terminal/OrderBook";
 import StreakCard from "../components/terminal/StreakCard";
 import SignalScoreCard from "../components/terminal/SignalScoreCard";
+import StrategyHealthCard from "../components/terminal/StrategyHealthCard";
 import NodeField from "../components/terminal/NodeField";
 import PnlChart from "../components/terminal/PnlChart";
 import RecentTrades from "../components/terminal/RecentTrades";
@@ -108,6 +109,7 @@ export default function Dashboard() {
         <div className="lg:col-span-3 flex flex-col gap-2 min-h-0 lg:overflow-y-auto">
           <StreakCard leaderboard={leaderboard} bot={bot} user={user} />
           <SignalScoreCard bot={bot} />
+          <StrategyHealthCard />
           <OrderBook snapshot={snapshot} />
           <div className="grid grid-cols-2 gap-2 flex-1 min-h-[220px]">
             <RecentTrades trades={trades} />
