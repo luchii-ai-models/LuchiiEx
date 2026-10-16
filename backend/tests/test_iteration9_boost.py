@@ -55,7 +55,7 @@ class TestSnapshot:
         d = r.json()
         for a in ("BTC", "ETH", "SOL"):
             m = d["markets"][a]
-            assert m["price"] > 0 and len(m["candles"]) == 60 and m["rsi"] is not None, (a, m.get("price"))
+            assert m["price"] > 0 and len(m["candles"]) >= 60 and m["rsi"] is not None, (a, m.get("price"))
         for k in ("price", "eth", "sol", "candles", "rsi"):
             assert d.get(k) is not None, k
         assert d["price"] == d["markets"]["BTC"]["price"]

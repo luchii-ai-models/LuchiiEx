@@ -81,11 +81,13 @@ function ConfigTab({ bot, refresh, connected }) {
   const [aggr, setAggr] = useState(bot?.aggressive ?? true);
   const [sizePct, setSizePct] = useState(bot?.size_pct ?? 50);
   const [assets, setAssets] = useState(bot?.assets ?? ["BTC", "ETH", "SOL"]);
+  const [strat, setStrat] = useState(bot?.strategy ?? "luchii003");
+  const luchii = strat === "luchii003";
   const toggleAsset = (a) => setAssets(assets.includes(a) ? (assets.length > 1 ? assets.filter((x) => x !== a) : assets) : [...assets, a]);
 
   const save = async () => {
     try {
-      await api.post("/bot/config", { position_usd: Number(posUsd), auto_fund: autoFund, take_profit_pct: Number(tp), stop_loss_pct: Number(sl), trend_filter: trendF, volume_filter: volF, trailing_stop: trail, partial_tp: partial, aggressive: aggr, size_pct: Number(sizePct), assets });
+      await api.post("/bot/config", { position_usd: Number(posUsd), auto_fund: autoFund, take_profit_pct: Number(tp), stop_loss_pct: Number(sl), trend_filter: trendF, volume_filter: volF, trailing_stop: trail, partial_tp: partial, aggressive: aggr, size_pct: Number(sizePct), assets, strategy: strat });
       toast.success("Config saved"); refresh();
     } catch (e) { toast.error(formatApiErrorDetail(e.response?.data?.detail)); }
   };
@@ -100,6 +102,16 @@ function ConfigTab({ bot, refresh, connected }) {
               className={`py-2 text-xs tracking-[0.15em] border transition-colors ${assets.includes(a) ? "border-neon-cyan text-neon-cyan bg-neon-cyan/10" : "border-term-border text-term-muted"}`}>{a}</button>
           ))}
         </div>
+      </div>
+      <div>
+        <Label>STRATEGY</Label>
+        <div className="grid grid-cols-2 gap-2">
+          <button data-testid="strategy-luchii003" onClick={() => setStrat("luchii003")} className={`py-2 text-xs tracking-[0.15em] border transition-colors ${luchii ? "border-neon-magenta text-neon-magenta bg-neon-magenta/10" : "border-term-border text-term-muted"}`}>LUCHII_003</button>
+          <button data-testid="strategy-aggressive" onClick={() => setStrat("aggressive")} className={`py-2 text-xs tracking-[0.15em] border transition-colors ${!luchii ? "border-neon-magenta text-neon-magenta bg-neon-magenta/10" : "border-term-border text-term-muted"}`}>AGGRESSIVE SCALP</button>
+        </div>
+        <p className="text-[9px] text-term-muted mt-2">{luchii
+          ? "Score ≥80 entries (SMA5/13, EMA20/50, RSI>55, volume>1.5x, trend>0.08%) + ADX>25 + ATR expansion · BULL/BEAR/CHOP regime (no trades in chop) · BTC master filter for ETH/SOL · risk 1–1.5% of balance with ATR×2.5 stop · TP 25% at +1%/+2.5%/+5% · break-even at +0.5%, lock at +1%, ATR trail."
+          : "SMA 5/13 cross scalp with the % size, TP/SL and filters below."}</p>
       </div>
       <Toggle on={aggr} onClick={() => setAggr(!aggr)} testId="aggressive-toggle" labelOn="AGGRESSIVE · SMA 5/13 · RSI CAP 80 · RELAXED FILTERS" labelOff="STANDARD · SMA 7/25 · RSI CAP 70 · FULL FILTERS" />
       <div className="grid grid-cols-2 gap-4 items-end">

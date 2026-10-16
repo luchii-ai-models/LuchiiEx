@@ -25,7 +25,7 @@ def rsi(closes, n=14):
 
 
 def _candles(resp) -> list:
-    rows = sorted(resp.json(), key=lambda r: r[0])[-60:]
+    rows = sorted(resp.json(), key=lambda r: r[0])[-300:]
     return [{"t": r[0] * 1000, "o": r[3], "h": r[2], "l": r[1], "c": r[4], "v": r[5]} for r in rows]
 
 

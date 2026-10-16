@@ -57,12 +57,28 @@ async def import_wallet(uid: str, secret: str) -> str:
     return pub
 
 
+_PX_CACHE: dict = {}
+
+
 async def prices(mints: list) -> dict:
     if not mints:
         return {}
-    async with httpx.AsyncClient(timeout=10) as c:
-        r = await c.get(f"{JUP}/price/v3", params={"ids": ",".join(mints)})
-    return {m: float(v["usdPrice"]) for m, v in r.json().items() if v and v.get("usdPrice")}
+    out = {}
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(f"{JUP}/price/v3", params={"ids": ",".join(mints)})
+        data = r.json()
+        if isinstance(data, dict):
+            out = {m: float(v["usdPrice"]) for m, v in data.items() if isinstance(v, dict) and v.get("usdPrice")}
+    except Exception:
+        pass
+    now = time.time()
+    for m, p in out.items():
+        _PX_CACHE[m] = (p, now)
+    for m in mints:
+        if m not in out and m in _PX_CACHE and now - _PX_CACHE[m][1] < 120:
+            out[m] = _PX_CACHE[m][0]
+    return out
 
 
 def token_targets(w: dict, mint: str) -> tuple:
@@ -143,18 +159,27 @@ async def balances(pubkey: str) -> dict:
 async def search(q: str) -> list:
     async with httpx.AsyncClient(timeout=15) as c:
         r = await c.get(f"{JUP}/tokens/v2/search", params={"query": q})
+    data = r.json()
+    if r.status_code >= 400 or not isinstance(data, list):
+        raise RuntimeError((data.get("error") if isinstance(data, dict) else None) or f"Jupiter search HTTP {r.status_code}")
     return [{"mint": t["id"], "symbol": t["symbol"], "name": t["name"], "decimals": t.get("decimals", 6),
              "price": t.get("usdPrice"), "liquidity": t.get("liquidity"), "mcap": t.get("mcap"), "icon": t.get("icon")}
-            for t in r.json()[:8]]
+            for t in data[:8]]
 
 
 async def token_info(mints: list) -> dict:
     if not mints:
         return {}
-    async with httpx.AsyncClient(timeout=15) as c:
-        r = await c.get(f"{JUP}/tokens/v2/search", params={"query": ",".join(mints)})
-    return {t["id"]: {"symbol": t["symbol"], "name": t["name"], "decimals": t.get("decimals", 6), "price": t.get("usdPrice")}
-            for t in r.json()}
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(f"{JUP}/tokens/v2/search", params={"query": ",".join(mints)})
+        data = r.json()
+        if not isinstance(data, list):
+            return {}
+        return {t["id"]: {"symbol": t["symbol"], "name": t["name"], "decimals": t.get("decimals", 6), "price": t.get("usdPrice")}
+                for t in data}
+    except Exception:
+        return {}
 
 
 async def quote(in_mint: str, out_mint: str, amount: int, slippage_bps: int) -> dict:

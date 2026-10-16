@@ -127,6 +127,20 @@ class ConfigIn(BaseModel):
     aggressive: Optional[bool] = None
     size_pct: Optional[float] = Field(None, ge=0, le=100)
     assets: Optional[list[Literal["BTC", "ETH", "SOL"]]] = Field(None, min_length=1)
+    strategy: Optional[Literal["luchii003", "aggressive"]] = None
+
+
+@api.get("/strategy/metrics")
+async def strategy_metrics(user=Depends(current_user)):
+    bot = await get_bot(user)
+    out = {}
+    for a in bot.get("assets") or ["BTC"]:
+        d = engine.decide(bot, a)
+        m = d.get("metrics") or {}
+        out[a] = {"action": d["action"], "score": d.get("score", 0), "regime": d.get("regime", "-"), "reason": d["reason"],
+                  "trend_pct": m.get("trend_pct"), "volume_ratio": m.get("volume_ratio"), "adx": m.get("adx"), "rsi": m.get("rsi"),
+                  "atr": m.get("atr"), "price": m.get("price"), "stop": d.get("stop"), "expected_move_pct": round(m["atr"] / m["price"] * 100 * 2.5, 3) if m.get("atr") and m.get("price") else None}
+    return {"strategy": bot.get("strategy", "luchii003"), "assets": out}
 
 
 @api.post("/bot/config")
@@ -149,7 +163,7 @@ async def bot_start(user=Depends(current_user)):
         bad("Live mode needs a connected exchange")
     await set_bot(user["id"], status="running")
     await engine.log(db, user["id"], {"action": "HOLD", "engine": "system", "confidence": 1.0,
-                                      "reason": f"engine engaged · {bot['mode'].upper()} · {', '.join(bot.get('assets') or ['BTC'])} · {str(bot.get('size_pct') or 0) + '% of balance' if bot.get('size_pct') else '$' + str(engine.order_usd(bot))} per trade · {'AGGRESSIVE' if bot.get('aggressive', True) else 'STANDARD'}"}, SNAPSHOT.get("price"))
+                                      "reason": f"engine engaged · {bot['mode'].upper()} · {', '.join(bot.get('assets') or ['BTC'])} · {'LUCHII_003 risk-based sizing (ATR stop, tiered TP, staged trail)' if bot.get('strategy', 'luchii003') == 'luchii003' else (str(bot.get('size_pct') or 0) + '% of balance' if bot.get('size_pct') else '$' + str(engine.order_usd(bot))) + ' per trade · ' + ('AGGRESSIVE' if bot.get('aggressive', True) else 'STANDARD')}"}, SNAPSHOT.get("price"))
     await alerts.notify(bot, "▶ Luchii engine engaged")
     return {"ok": True}
 
@@ -183,7 +197,7 @@ async def bot_reset(user=Depends(current_user)):
     bot = await get_bot(user)
     start = bot.get("live_equity") or None
     await set_bot(user["id"], status="stopped", kill_switch=False, pending=None, cash=engine.START_CASH, position_qty=0.0,
-                  start_equity=start, start_ts=now_ms() if start else None, alt_positions={}, peak_price=0.0, tp_taken=False,
+                  start_equity=start, start_ts=now_ms() if start else None, alt_positions={}, peak_price=0.0, tp_taken=False, stop_price=0.0, tiers_done=0, entry_atr=0.0,
                   entry_price=0.0, realized_pnl=0.0, trades_count=0, wins=0, losses=0)
     for c in (db.bot_logs, db.bot_trades, db.bot_pnl):
         await c.delete_many({"user_id": user["id"]})
@@ -695,7 +709,7 @@ async def sol_view(user) -> dict:
         for m in w.get("tokens") or []:
             pos = (w.get("positions") or {}).get(m) or {}
             tp, sl = solana_dex.token_targets(w, m)
-            entry, p = float(pos.get("entry_usd") or 0), px.get(m)
+            entry, p = float(pos.get("entry_usd") or 0), px.get(m) or (info.get(m) or {}).get("price")
             peak = max(float(pos.get("peak_usd") or 0), entry)
             out["token_balances"][m] = {**(bal["tokens"].get(m) or {"ui": 0.0, "raw": 0}), **info.get(m, {}), "price": p,
                                         "entry_usd": entry or None, "move_pct": round((p - entry) / entry * 100, 2) if p and entry else None,
@@ -889,3 +903,6 @@ async def startup():
     if not await db.meta.find_one({"_id": "boost_v1"}):
         await db.bots.update_many({}, {"$set": engine.BOOST_DEFAULTS})
         await db.meta.insert_one({"_id": "boost_v1", "ts": now_ms()})
+    if not await db.meta.find_one({"_id": "luchii003_v1"}):
+        await db.bots.update_many({}, {"$set": engine.LUCHII003_DEFAULTS})
+        await db.meta.insert_one({"_id": "luchii003_v1", "ts": now_ms()})
