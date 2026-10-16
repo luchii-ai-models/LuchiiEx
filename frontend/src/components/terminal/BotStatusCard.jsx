@@ -49,7 +49,7 @@ export default function BotStatusCard({ bot, refresh, highlightKill }) {
             {alts.map(([a, p]) => ` · ${p.qty} ${a} @ $${Number(p.entry).toFixed(2)}`)}
           </span>
         ) : <span>FLAT</span>}</span>
-        <span>{bot.size_pct ? `${bot.size_pct}%/TRADE` : `SIZE $${bot.position_usd}`}{bot.manual_confirm ? " · MC" : ""}</span>
+        <span>{bot.strategy === "aggressive" ? (bot.size_pct ? `${bot.size_pct}%/TRADE` : `SIZE $${bot.position_usd}`) : "RISK 1–1.5%/TRADE"}{bot.manual_confirm ? " · MC" : ""}</span>
       </div>
 
       {bot.kill_switch && (

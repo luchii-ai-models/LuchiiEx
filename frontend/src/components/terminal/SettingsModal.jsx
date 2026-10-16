@@ -113,6 +113,7 @@ function ConfigTab({ bot, refresh, connected }) {
           ? "Score ≥80 entries (SMA5/13, EMA20/50, RSI>55, volume>1.5x, trend>0.08%) + ADX>25 + ATR expansion · BULL/BEAR/CHOP regime (no trades in chop) · BTC master filter for ETH/SOL · risk 1–1.5% of balance with ATR×2.5 stop · TP 25% at +1%/+2.5%/+5% · break-even at +0.5%, lock at +1%, ATR trail."
           : "SMA 5/13 cross scalp with the % size, TP/SL and filters below."}</p>
       </div>
+      {!luchii && (<>
       <Toggle on={aggr} onClick={() => setAggr(!aggr)} testId="aggressive-toggle" labelOn="AGGRESSIVE · SMA 5/13 · RSI CAP 80 · RELAXED FILTERS" labelOff="STANDARD · SMA 7/25 · RSI CAP 70 · FULL FILTERS" />
       <div className="grid grid-cols-2 gap-4 items-end">
         <div>
@@ -146,6 +147,8 @@ function ConfigTab({ bot, refresh, connected }) {
           <Toggle on={volF && !aggr} onClick={() => setVolF(!volF)} testId="volume-filter-toggle" labelOn="VOLUME FILTER ON · BUY ONLY ON ABOVE-AVERAGE VOLUME" labelOff={aggr ? "VOLUME FILTER SKIPPED IN AGGRESSIVE MODE" : "VOLUME FILTER OFF"} />
         </div>
       </div>
+      </>)}
+      {luchii && <p data-testid="luchii-sizing-note" className="text-[9px] text-neon-red">LUCHII_003 sizes every trade from risk (1–1.5% of balance per ATR×2.5 stop). Bigger balance = bigger trades. No bot can guarantee profit.</p>}
       <div>
         <Label>AUTO-FUND FROM FUNDING ACCOUNT</Label>
         <button data-testid="auto-fund-toggle" onClick={() => setAutoFund(!autoFund)}

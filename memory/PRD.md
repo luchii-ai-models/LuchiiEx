@@ -65,6 +65,13 @@ User choices: copy from trade-bridge-73; use the env values exactly; no Emergent
 - UI: CONFIG tab has MARKETS toggles, AGGRESSIVE toggle, % of balance input, risk warning; filter labels reflect aggressive mode; status card shows alt positions and %/TRADE.
 - iteration_9: 14 new + 46 regression tests pass; UI verified 1920/390. Testing-agent minors fixed (mkt() no BTC fallback for alts, % size used for auto-fund amount, per-asset log pct, pending size).
 
+## Implemented (2026-10-16, iteration 12 — LUCHII_003 production strategy)
+- New `backend/strategy.py`: EMA20/50/200, ATR14 + 20-bar ATR mean, ADX14, SMA5/13, trend_pct, volume_ratio; regime BULL/BEAR/CHOP (EMA50 vs EMA200 + ADX; chop = no trades); entry score (5×20 pts) ≥80 + ADX>25 + ATR expansion; BTC master filter + BTC/alt BEAR block for ETH/SOL; risk-based sizing (1.5% score≥90, 1% ≥80, BEAR cap 0.75%) with ATR×2.5 stop; tiered TP 25% at +1/+2.5/+5%; staged stop (break-even +0.5%, lock +1%, peak−3ATR at +2%, peak−2ATR at +5%). Spot only — no shorts.
+- Engine: `bot.strategy` = luchii003 (default for ALL users via db.meta luchii003_v1) | aggressive (yesterday's scalp kept as option). Positions carry stop/tiers/entry_atr (BTC root, alts in alt_positions). Tier slices below exchange minimum are rounded up or skipped (never dump the position). market.py keeps 300 1-min candles.
+- API `GET /api/strategy/metrics`; dashboard SignalScoreCard (score bar, regime, trend, vol, ADX, RSI, expected move, stop, reason); CONFIG tab STRATEGY switch, aggressive-only controls hidden under LUCHII_003.
+- iteration_10: 22 new + 60 regression tests pass; UI verified 1920/390; agent findings fixed.
+- Out of scope (user chose A only): the `luchii-backtest` package / walk-forward / Monte Carlo; governance/ops docs pasted by user are not app features.
+
 ## Known limits
 - Live order placement has not been tested with real keys
 - Some exchanges reject fake secrets with a decode error before the auth call; this is still shown as "Exchange verification failed: …"

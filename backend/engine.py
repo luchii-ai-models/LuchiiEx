@@ -292,8 +292,16 @@ async def execute(bot: dict, d: dict, asset: str = "BTC"):
         else:
             want = pos["position_qty"] * sell_fraction(d)
             qty = min(want, await free_of(ex, asset))
-            if (d.get("partial") or d.get("fraction")) and (qty < min_qty or qty * price < min_cost):
-                d = {**d, "partial": False, "fraction": None, "reason": d["reason"] + " · (slice below exchange minimum, selling all)"}
+            if d.get("fraction") and (qty < min_qty or qty * price < min_cost):
+                need = max(min_qty, (min_cost / price) if min_cost else 0)
+                if need <= pos["position_qty"] * 0.6:
+                    qty = min(need * 1.05, await free_of(ex, asset))
+                    d = {**d, "reason": d["reason"] + " · (slice rounded up to exchange minimum)"}
+                else:
+                    await set_bot(uid, **pos_fields(asset, tiers=d.get("tier", pos["tiers_done"]), stop=d.get("stop")))
+                    return await wait_log(uid, bot, f"{d['reason']} · slice below exchange minimum, keeping full position · stop ${d.get('stop', 0):,.2f}")
+            elif d.get("partial") and (qty < min_qty or qty * price < min_cost):
+                d = {**d, "partial": False, "reason": d["reason"] + " · (half below exchange minimum, selling all)"}
                 qty = min(pos["position_qty"], await free_of(ex, asset))
             if qty < max(min_qty, 1e-8):
                 return await wait_log(uid, bot, f"[{asset}] SELL signal skipped · only {qty} {asset} free in trading (minimum {min_qty}).")
@@ -370,7 +378,8 @@ async def tick_bot(bot: dict):
                 await set_bot(uid, **{key: time.time()})
                 await log(db, uid, d, price, asset=asset)
         elif bot["mode"] == "live" and bot.get("manual_confirm"):
-            size = order_usd(bot, bot.get("live_equity")) if bot.get("size_pct") and bot.get("live_equity") else order_usd(bot)
+            cash = bot.get("live_equity") or 0
+            size = buy_usd(bot, d, cash, price) if d["action"] == "BUY" and cash else order_usd(bot)
             await set_bot(uid, pending={"action": d["action"], "asset": asset, "price": price, "size_usd": size,
                                         "reason": d["reason"], "decision": d, "ts": now_ms()})
             await alerts.notify(bot, f"⏳ Confirm {d['action']} {asset} @ ${price:,.2f} in the terminal")

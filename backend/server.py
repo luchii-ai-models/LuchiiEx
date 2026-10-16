@@ -136,10 +136,11 @@ async def strategy_metrics(user=Depends(current_user)):
     out = {}
     for a in bot.get("assets") or ["BTC"]:
         d = engine.decide(bot, a)
-        m = d.get("metrics") or {}
-        out[a] = {"action": d["action"], "score": d.get("score", 0), "regime": d.get("regime", "-"), "reason": d["reason"],
+        lm = d if bot.get("strategy", "luchii003") == "luchii003" else engine.luchii_signal(bot, a)
+        m = lm.get("metrics") or {}
+        out[a] = {"action": d["action"], "score": lm.get("score", 0), "regime": lm.get("regime", "-"), "reason": d["reason"],
                   "trend_pct": m.get("trend_pct"), "volume_ratio": m.get("volume_ratio"), "adx": m.get("adx"), "rsi": m.get("rsi"),
-                  "atr": m.get("atr"), "price": m.get("price"), "stop": d.get("stop"), "expected_move_pct": round(m["atr"] / m["price"] * 100 * 2.5, 3) if m.get("atr") and m.get("price") else None}
+                  "atr": m.get("atr"), "price": m.get("price"), "stop": d.get("stop") or lm.get("stop"), "expected_move_pct": round(m["atr"] / m["price"] * 100 * 2.5, 3) if m.get("atr") and m.get("price") else None}
     return {"strategy": bot.get("strategy", "luchii003"), "assets": out}
 
 

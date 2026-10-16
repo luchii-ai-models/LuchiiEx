@@ -1,0 +1,44 @@
+{
+  "summary": "Iteration 10 tested the LUCHII_003 strategy. Backend: the new tests/test_iteration10_luchii003.py has 22 tests and all pass. They cover position_size, update_stop, classify_regime, adx and atr, and the synthetic BUY / CHOP / BTC master filter / TP1-TP3 fractions (0.25, 0.3333, 0.5) / STOP / warming-up cases. They also cover engine.decide dispatch, buy_usd (4900), sell_fraction, pos_of and pos_fields, fresh user strategy=luchii003, the config strategy persisting with 'foo' rejected (422), /strategy/metrics for all 3 assets, snapshot candles at 300, and the paper execute path for ETH and BTC (stop, tiers and atr written; TP1 sells 25% and sets tiers 1). /bot/reset clears all of these. The regression suites it6/7/8/9 pass together with it10: 82/82, -n 0. Frontend (admin, 1920 and 390): the signal-score-card shows LUCHII_003 and the BTC/ETH/SOL rows with regime, action, score bar, all 7 metric labels and the reason. strategy-luchii003 is highlighted by default. Switching to aggressive and saving shows the 'Config saved' toast; it is still highlighted on reopen and the dashboard shows AGGRESSIVE. The admin was restored to luchii003 and the dashboard shows LUCHII_003 again. There is no horizontal overflow at 390 (scrollWidth 390). The Solana tab loads and the footer text is exact. One layout regression was found at 1920x1080: the right column now overflows (details below).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "strategy.evaluate", "issue": "The NaN/warming-up check runs before the open-position logic. If the indicators are missing (fewer than 200 candles, or a Coinbase data glitch), an open position gets no stop or TP handling. Evaluate the stop and tiers first, using pos.stop_price, then check warm-up for entries only."},
+      {"endpoint": "strategy.evaluate (alt filter)", "issue": "The 'not BEAR' check for ETH/SOL looks at the alt's own regime, not BTC's regime. While BTC is in CHOP (but bull_trend is true), SOL produced a live BUY signal (observed: BTC CHOP ADX 13, SOL BUY score 80). Confirm whether BTC CHOP should block alt longs."},
+      {"endpoint": "engine.execute (live)", "issue": "With risk-based sizing on small balances, a 25% tier slice is often below the exchange minimum. The existing fallback then sells the whole position, so the tiered TP turns into a full exit at +1%. Consider skipping the tier, or rounding it up to the minimum, instead of selling everything."},
+      {"endpoint": "tick_bot manual_confirm", "issue": "The pending size_usd shown for a luchii003 decision comes from order_usd (size_pct), not from the risk-based buy_usd that is actually executed."},
+      {"endpoint": "/api/strategy/metrics", "issue": "When strategy=aggressive, regime is '-', score is 0 and all metrics are null, so the card shows dashes only. Consider always computing the LUCHII metrics for display."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Dashboard right column (1920x1080)", "issue": "The new SignalScoreCard (357px tall) pushed the content past the column height (scrollHeight 1133 vs clientHeight 956, overflow visible, page lg:h-screen overflow-hidden). The order book panel bottom (y=1044) overlaps the footer (top 1029). The RECENT/ANALYTICS grid starts at y=1052 and is clipped, so it cannot be seen. Fix: make the right column overflow-y-auto, use a min-h-0 flex layout, or make the signal card more compact or collapsible.", "selector": "[data-testid='signal-score-card'] parent column", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Settings > Config", "issues": ["When LUCHII_003 is selected, the aggressive-only controls are still shown and editable: the AGGRESSIVE toggle, % of balance, fixed USD, TP/SL %, trailing, partial TP and the filters. LUCHII_003 ignores them (it uses risk sizing, tiered TP and ATR trail). Hide or disable them when luchii003 is active."]},
+      {"screen": "Dashboard status card", "issue_note": "", "issues": ["It still shows '50%/TRADE' while LUCHII_003 uses risk-based 1-1.5% sizing. Show 'RISK 1-1.5%' for luchii003."]},
+      {"screen": "SignalScoreCard mobile", "issues": ["The reason text is truncated (for example the ETH reason ends in 'ATR...'). On touch devices the title tooltip is not available. Consider line-clamp-2."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iteration10_luchii003.py", "/app/test_reports/pytest/pytest_iteration10.xml"],
+  "action_items": [
+    "Fix the right-column overflow at 1920x1080: the order book overlaps the footer and RECENT/ANALYTICS is hidden.",
+    "Run stop/TP handling for open positions before the warming-up NaN return in strategy.evaluate.",
+    "Decide whether BTC CHOP or BEAR should block ETH/SOL entries. Currently only the BTC bull_trend and the alt's own BEAR regime are checked.",
+    "Hide or disable aggressive-only config controls and the '%/TRADE' label while LUCHII_003 is active.",
+    "Optional: tier slices below the exchange minimum currently sell the whole position. Consider skipping the tier instead."
+  ],
+  "critical_code_review_comments": [
+    "Motor binds to the first event loop. Tests that run engine.execute via asyncio.run must swap engine.db and solana_dex.db for a fresh AsyncIOMotorClient (see run_engine in test_iteration10). Otherwise a BTC BUY's mirror_all task poisons the client and test_iteration9 fails with 'Event loop is closed'. This is test-only and not an app bug.",
+    "The luchii003_v1 migration switched the running live OKX bot (6ad0c885...) to luchii003. Any existing position on it will get a default stop of entry - 2.5*ATR, because stop_price and entry_atr were never set.",
+    "server.py is 909 lines. Consider splitting the bot routes out into their own module."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration10_luchii003.py"],
+  "success_rate": {"backend": "100% (82/82 incl. regression)", "frontend": "90% (all flows pass; 1 layout overflow at 1920x1080)"},
+  "test_credentials": "admin@gravia.io / Gravia@2026 (from /app/memory/test_credentials.md); bcrypt $2b$ verified",
+  "seed_data_creation": "Test users test_it10_* were registered and then cleaned up, along with their bots, logs, trades and pnl. No leftover test users.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: cd /app/backend && set -a && . ../frontend/.env && . ./.env && set +a && pytest tests/test_iteration10_luchii003.py tests/test_iteration6_solana_risk.py tests/test_iteration7_token_tpsl.py tests/test_iteration8_exit_rules.py tests/test_iteration9_boost.py -n 0. The synthetic candles uptrend() (300 candles, x1.001 growth, last closed vol 100 vs 10) give a BULL BUY with score 100, and flat() gives CHOP. run_engine() wraps asyncio.run with a fresh motor db. The admin bot is restored to luchii003 and stopped. Live user 6ad0c885f4fa421663189000 is running and was not touched."
+}

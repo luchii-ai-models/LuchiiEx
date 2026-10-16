@@ -40,7 +40,7 @@ export default function SignalScoreCard({ bot }) {
               <span>EXP.MOVE <b className="text-white">{fmt(m.expected_move_pct, 2, "%")}</b></span>
               <span className="col-span-2">STOP <b className="text-white">{m.stop ? `$${Number(m.stop).toLocaleString(undefined, { maximumFractionDigits: 2 })}` : "—"}</b></span>
             </div>
-            <p className="text-[9px] text-term-muted mt-1 truncate" title={m.reason}>{m.reason}</p>
+            <p className="text-[9px] text-term-muted mt-1 line-clamp-2" title={m.reason}>{m.reason}</p>
           </div>
         ))}
       </div>

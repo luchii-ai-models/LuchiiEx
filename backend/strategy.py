@@ -137,31 +137,35 @@ def update_stop(entry, highest, pnl_pct, atr_v, existing):
 def evaluate(asset: str, i: dict, btc: dict, pos: dict) -> dict:
     """Returns {action, fraction?, stop?, risk?, score, regime, reason, metrics}."""
     base = {"score": 0, "regime": i.get("regime", "CHOP"), "metrics": i}
-    if nan(i["sma5"], i["sma13"], i["ema20"], i["ema50"], i["ema200"], i["rsi"], i["atr"], i["atr_ma"], i["adx"], i["trend_pct"], i["volume_ratio"]):
-        return {**base, "action": "HOLD", "reason": f"[{asset}] warming up indicators (need 200 candles)"}
-    score, missing = entry_score(i)
-    base["score"] = score
     price, qty = i["price"], pos["position_qty"]
-    if qty > 0 and pos["entry_price"]:
+    warm = nan(i["sma5"], i["sma13"], i["ema20"], i["ema50"], i["ema200"], i["rsi"], i["atr"], i["atr_ma"], i["adx"], i["trend_pct"], i["volume_ratio"])
+    if not warm:
+        base["score"], missing = entry_score(i)
+    if qty > 0 and pos["entry_price"] and price:
         entry, highest = pos["entry_price"], max(pos["peak_price"] or 0, pos["entry_price"], price)
         pnl = (price - entry) / entry * 100
-        stop = update_stop(entry, highest, pnl, pos.get("entry_atr") or i["atr"], pos.get("stop_price") or entry - i["atr"] * RULES["risk"]["atr_stop_mult"])
+        atr_v = pos.get("entry_atr") or (None if nan(i.get("atr")) else i["atr"])
+        existing = pos.get("stop_price") or (entry - atr_v * RULES["risk"]["atr_stop_mult"] if atr_v else 0)
+        stop = update_stop(entry, highest, pnl, atr_v, existing)
         tiers = int(pos.get("tiers_done") or 0)
-        if price <= stop:
+        if stop and price <= stop:
             why = "STOP" if stop < entry else "BREAK-EVEN STOP" if stop == entry else "TRAILING STOP"
             return {**base, "action": "SELL", "stop": stop, "reason": f"[{asset}] {why} hit ${stop:,.2f} · {pnl:+.2f}% · peak ${highest:,.2f}"}
         if tiers < len(RULES["tiers"]) and pnl >= RULES["tiers"][tiers][0]:
             frac = RULES["tiers"][tiers][1] / (1 - 0.25 * tiers)
             return {**base, "action": "SELL", "fraction": round(frac, 4), "tier": tiers + 1, "stop": stop,
                     "reason": f"[{asset}] TP{tiers + 1} +{RULES['tiers'][tiers][0]}% hit ({pnl:+.2f}%) · selling 25% of original · stop → ${stop:,.2f}"}
-        return {**base, "action": "HOLD", "stop": stop, "reason": f"[{asset}] in position {pnl:+.2f}% · stop ${stop:,.2f} · TP{tiers + 1} next · regime {i['regime']}"}
+        return {**base, "action": "HOLD", "stop": stop, "reason": f"[{asset}] in position {pnl:+.2f}% · stop ${stop:,.2f} · TP{tiers + 1} next · regime {i.get('regime')}"}
+    if warm:
+        return {**base, "action": "HOLD", "reason": f"[{asset}] warming up indicators (need 200 candles)"}
+    score = base["score"]
     reg = i["regime"]
     if reg == "CHOP":
         return {**base, "action": "HOLD", "reason": f"[{asset}] CHOP regime (ADX {i['adx']:.0f}) · no trade · score {score}/100"}
     if asset != "BTC" and not btc.get("bull_trend"):
         return {**base, "action": "HOLD", "reason": f"[{asset}] BTC master filter · BTC below EMA200/EMA20<50 · no alt longs · score {score}/100"}
-    if asset != "BTC" and reg == "BEAR":
-        return {**base, "action": "HOLD", "reason": f"[{asset}] BEAR regime · no alt longs · score {score}/100"}
+    if asset != "BTC" and (reg == "BEAR" or btc.get("regime") == "BEAR"):
+        return {**base, "action": "HOLD", "reason": f"[{asset}] BEAR regime ({'BTC' if btc.get('regime') == 'BEAR' else asset}) · no alt longs · score {score}/100"}
     gates = []
     if i["adx"] <= RULES["entry"]["adx_min"]:
         gates.append(f"ADX {i['adx']:.0f}≤25")
