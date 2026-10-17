@@ -175,7 +175,7 @@ def update_stop(entry, highest, pnl_pct, atr_v, existing):
     return stop
 
 
-def evaluate(asset: str, i: dict, btc: dict, pos: dict) -> dict:
+def evaluate(asset: str, i: dict, btc: dict, pos: dict, weights: dict | None = None) -> dict:
     """Returns {action, fraction?, stop?, risk?, score, regime, reason, metrics}."""
     base = {"score": 0, "regime": i.get("regime", "CHOP"), "metrics": i}
     price, qty = i["price"], pos["position_qty"]
@@ -216,7 +216,12 @@ def evaluate(asset: str, i: dict, btc: dict, pos: dict) -> dict:
         gates.append("ATR not expanding")
     if score < RULES["entry"]["score_min"] or gates:
         return {**base, "action": "HOLD", "reason": f"[{asset}] score {score}/100 · {reg} · missing {', '.join(missing + gates) or '-'}"}
+    import agents
+    v = agents.vote(i, weights)
+    base["agents"] = v
+    if not v["allowed"]:
+        return {**base, "action": "HOLD", "reason": f"[{asset}] agent vote · {v['reason']} · score {score}/100"}
     risk = risk_pct(score, reg)
     stop = price - i["atr"] * RULES["risk"]["atr_stop_mult"]
-    return {**base, "action": "BUY", "risk": risk, "stop": stop, "entry_atr": i["atr"],
+    return {**base, "action": "BUY", "risk": risk, "stop": stop, "entry_atr": i["atr"], "winner_agent": v["winner"],
             "reason": f"[{asset}] BUY · score {score}/100 · {reg} · trend {i['trend_pct']:+.2f}% · vol {i['volume_ratio']:.1f}x · ADX {i['adx']:.0f} · risk {risk * 100:.2g}% · stop ${stop:,.2f}"}

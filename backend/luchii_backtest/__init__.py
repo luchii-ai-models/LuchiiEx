@@ -211,3 +211,102 @@ def deployment_gate(oos: list) -> dict:
     checks = {"oos_pf>=1.5": pf >= 1.5, "sharpe>=1.25": sh >= 1.25, "trades>=50": tr >= 50, "dd<=12": dd <= 12,
               "stability 0.7-1.3": stab is not None and 0.7 <= stab <= 1.3}
     return {"pass": all(checks.values()), "checks": checks, "oos_pf": round(pf, 3), "sharpe": round(sh, 3), "trades": tr, "max_drawdown": round(dd, 3), "stability": stab}
+
+
+DAY = 86400_000
+
+
+def day_windows(candles: list, train_days=20, validate_days=5, test_days=5, step_days=1):
+    """Sliding train/validate/test windows in whole days (candle 't' is ms). Yields (train, validate, test, meta)."""
+    if not candles:
+        return
+    t0 = candles[0]["t"]
+    total = train_days + validate_days + test_days
+    days = int((candles[-1]["t"] - t0) / DAY) + 1
+    for s in range(0, days - total + 1, step_days):
+        a, b, c, d = (t0 + k * DAY for k in (s, s + train_days, s + train_days + validate_days, s + total))
+        train = [x for x in candles if a <= x["t"] < b]
+        val = [x for x in candles if b - 210 * 60_000 <= x["t"] < c]
+        test = [x for x in candles if c - 210 * 60_000 <= x["t"] < d]
+        yield train, val, test, {"train": (a, b), "validate": (b, c), "test": (c, d)}
+
+
+def _iso(ms):
+    return time.strftime("%Y-%m-%d", time.gmtime(ms / 1000))
+
+
+def walk_forward_days(candles: list, btc_candles=None, train_days=20, validate_days=5, test_days=5, step_days=1, grid=None) -> dict:
+    """Train picks params (PF>=1.10 required), validate must hold PF>=1.0, test is recorded. Returns per-window results + approval."""
+    grid = grid or PARAM_GRID
+    windows, skipped = [], 0
+    for train, val, test, meta in day_windows(candles, train_days, validate_days, test_days, step_days):
+        if len(train) < 400 or len(test) < 300:
+            continue
+        sel = lambda part: [x for x in (btc_candles or []) if part[0]["t"] <= x["t"] <= part[-1]["t"]] or None  # noqa: E731
+        best, best_s, train_pf = None, -math.inf, 0.0
+        for params in parameter_sets(grid):
+            s = run_backtest(train, params, btc_candles=sel(train))
+            if s["trades"] and optimization_score(s) > best_s:
+                best, best_s, train_pf = params, optimization_score(s), s["profit_factor"]
+        if best is None or train_pf < 1.10:
+            skipped += 1
+            continue
+        v = run_backtest(val, best, btc_candles=sel(val))
+        if v["trades"] and v["profit_factor"] < 1.0:
+            skipped += 1
+            continue
+        t = run_backtest(test, best, btc_candles=sel(test))
+        pnls = t["trade_pnls"]
+        windows.append({"train": [_iso(meta["train"][0]), _iso(meta["train"][1])], "validate": [_iso(meta["validate"][0]), _iso(meta["validate"][1])],
+                        "test": [_iso(meta["test"][0]), _iso(meta["test"][1])], "params": best, "train_pf": None if train_pf == float("inf") else round(train_pf, 3),
+                        "trades": t["trades"], "win_rate": t["win_rate"], "profit_factor": None if t["profit_factor"] == float("inf") else round(t["profit_factor"], 3),
+                        "expectancy": round(sum(pnls) / len(pnls), 4) if pnls else 0.0, "max_drawdown": t["max_drawdown"], "net_profit": t["net_profit"], "sharpe": t["sharpe"]})
+    return {"windows": windows, "skipped": skipped, **approve_walk_forward(windows)}
+
+
+def approve_walk_forward(windows: list) -> dict:
+    """Reject if avg PF < 1.10, max DD > 15%, avg win rate < 35% or expectancy <= 0."""
+    traded = [w for w in windows if w["trades"]]
+    if not traded:
+        return {"deployment": "REJECTED", "reason": "no windows with trades", "avg_pf": 0.0, "avg_win_rate": 0.0, "avg_expectancy": 0.0, "max_drawdown": 0.0}
+    pfs = [min(w["profit_factor"], 10) if w["profit_factor"] is not None else 10 for w in traded]
+    avg_pf = sum(pfs) / len(pfs)
+    med_pf = sorted(pfs)[len(pfs) // 2]
+    wr = sum(w["win_rate"] for w in traded) / len(traded)
+    ex = sum(w["expectancy"] for w in traded) / len(traded)
+    dd = max(w["max_drawdown"] for w in traded)
+    checks = {"avg_pf>=1.10": avg_pf >= 1.10, "max_dd<=15": dd <= 15, "win_rate>=35": wr >= 35, "expectancy>0": ex > 0, "windows>=5": len(traded) >= 5}
+    return {"deployment": "APPROVED" if all(checks.values()) else "REJECTED", "checks": checks, "avg_pf": round(avg_pf, 3), "median_pf": round(med_pf, 3),
+            "avg_win_rate": round(wr, 1), "avg_expectancy": round(ex, 4), "max_drawdown": round(dd, 3), "windows_traded": len(traded)}
+
+
+def monte_carlo_ruin(trade_pnls: list, simulations=5000, starting_equity=1000.0, ruin_pct=0.5, seed=42) -> dict:
+    """Bootstrap (with replacement) real trade returns: probability of ruin, 95% drawdown, worst loss streak, return distribution."""
+    import random
+    if len(trade_pnls) < 2:
+        return {"simulations": 0, "trades": len(trade_pnls), "probability_of_ruin": None, "deployment": "INSUFFICIENT_DATA", "reason": "need at least 2 closed trades"}
+    rng = random.Random(seed)
+    n, ruin_level = len(trade_pnls), starting_equity * ruin_pct
+    finals, dds, streaks, ruins = [], [], [], 0
+    for _ in range(simulations):
+        eq, peak, dd, streak, worst = starting_equity, starting_equity, 0.0, 0, 0
+        for _k in range(n):
+            p = trade_pnls[rng.randrange(n)]
+            eq += p
+            peak = max(peak, eq)
+            dd = max(dd, (peak - eq) / peak * 100 if peak > 0 else 100.0)
+            streak = streak + 1 if p < 0 else 0
+            worst = max(worst, streak)
+        finals.append(eq)
+        dds.append(dd)
+        streaks.append(worst)
+        ruins += eq < ruin_level
+    finals.sort(); dds.sort(); streaks.sort()
+    q = lambda xs, p: xs[min(len(xs) - 1, int(p * (len(xs) - 1)))]  # noqa: E731
+    por = ruins / simulations * 100
+    dd95 = q(dds, 0.95)
+    return {"simulations": simulations, "trades": n, "starting_equity": starting_equity, "probability_of_ruin": round(por, 2), "ruin_level": ruin_level,
+            "drawdown_95": round(dd95, 2), "drawdown_median": round(q(dds, 0.5), 2), "worst_loss_streak": streaks[-1], "loss_streak_95": q(streaks, 0.95),
+            "equity_p05": round(q(finals, 0.05), 2), "equity_median": round(q(finals, 0.5), 2), "equity_p95": round(q(finals, 0.95), 2),
+            "capital_required_for_dd95_at_20pct": round(starting_equity * dd95 / 20, 2) if dd95 else None,
+            "deployment": "APPROVED" if por < 5 and dd95 < 20 else "REJECTED", "checks": {"probability_of_ruin<5": por < 5, "drawdown_95<20": dd95 < 20}}

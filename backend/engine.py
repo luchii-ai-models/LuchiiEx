@@ -67,6 +67,9 @@ def pos_fields(asset: str, qty=None, entry=None, peak=None, tp_taken=None, stop=
     return {f"alt_positions.{asset}.{k}": v for k, v in vals.items() if v is not None}
 
 
+AGENT_WEIGHTS: dict = {}
+
+
 def luchii_signal(bot: dict, asset: str) -> dict:
     m = mkt(asset)
     if not m.get("candles"):
@@ -74,7 +77,7 @@ def luchii_signal(bot: dict, asset: str) -> dict:
     i = strategy.indicators(m["candles"], m["price"], m.get("rsi"))
     b = mkt("BTC")
     btc = strategy.indicators(b["candles"], b["price"], b.get("rsi")) if asset != "BTC" and b.get("candles") else i
-    d = strategy.evaluate(asset, i, btc, pos_of(bot, asset))
+    d = strategy.evaluate(asset, i, btc, pos_of(bot, asset), AGENT_WEIGHTS.get(bot["user_id"]))
     d["confidence"] = round(0.5 + d["score"] / 200, 2)
     d["metrics"] = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in d["metrics"].items()}
     return d
@@ -409,6 +412,10 @@ async def tick_bot(bot: dict):
     if bot["mode"] == "live":
         await refresh_live_equity(bot)
         bot = await db.bots.find_one({"user_id": uid})
+    if time.time() - bot.get("weights_ts", 0) > 600:
+        import agents
+        AGENT_WEIGHTS[uid] = agents.weights_from_audit(await audit.closed(uid))
+        await set_bot(uid, weights_ts=time.time(), agent_weights=AGENT_WEIGHTS[uid])
     if bot.get("pending"):
         return
     for asset in bot.get("assets") or ["BTC"]:

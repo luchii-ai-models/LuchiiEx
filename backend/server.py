@@ -187,6 +187,73 @@ async def trades_buckets(user=Depends(current_user)):
     return {"trades": len(rows), "buckets": audit.buckets(rows)}
 
 
+@api.get("/strategy/agents")
+async def strategy_agents(user=Depends(current_user)):
+    import agents
+    import audit
+    bot = await get_bot(user)
+    rows = await audit.closed(user["id"])
+    weights = agents.weights_from_audit(rows)
+    out = {}
+    for a in bot.get("assets") or ["BTC"]:
+        i, _ = engine.snapshot(a)
+        out[a] = agents.vote(i, weights) if i else {"scores": {}, "final": 0, "winner": None, "allowed": False, "reason": "warming up"}
+        out[a]["regime"] = i.get("regime") if i else None
+    perf = {ag: {"trades": len([r for r in rows if r.get("winner_agent") == ag]), "weight": weights[ag]} for ag in agents.AGENTS}
+    return {"min_final": agents.MIN_FINAL, "allowed": {k: sorted(v) for k, v in agents.REGIME_ALLOWED.items()}, "weights": weights, "performance": perf, "assets": out}
+
+
+@api.get("/strategy/montecarlo")
+async def strategy_montecarlo(user=Depends(current_user)):
+    import audit
+    from luchii_backtest import monte_carlo_ruin
+    rows = await audit.closed(user["id"])
+    bot = await get_bot(user)
+    eq = float(bot.get("live_equity") or bot.get("start_equity") or 1000.0)
+    return {"source": "live trade audit", **monte_carlo_ruin([r["net_pnl"] for r in rows if r.get("net_pnl") is not None], starting_equity=eq)}
+
+
+WF_JOBS: dict = {}
+
+
+async def _run_wf(uid: str, asset: str, days: int):
+    import luchii_backtest as lb
+    key = f"{uid}:{asset}"
+    try:
+        loop = asyncio.get_running_loop()
+        bars = days * 1440 + 300
+        cs = await loop.run_in_executor(None, lambda: lb.fetch_candles(asset, bars))
+        btc = cs if asset == "BTC" else await loop.run_in_executor(None, lambda: lb.fetch_candles("BTC", bars))
+        WF_JOBS[key].update(status="running", candles=len(cs), stage="walk-forward")
+        res = await loop.run_in_executor(None, lambda: lb.walk_forward_days(cs, btc, step_days=max(1, days // 10)))
+        full = await loop.run_in_executor(None, lambda: lb.run_backtest(cs, res["windows"][-1]["params"] if res["windows"] else None, btc_candles=btc))
+        mc = lb.monte_carlo_ruin(full["trade_pnls"], starting_equity=10000.0)
+        doc = {"user_id": uid, "asset": asset, "days": days, "candles": len(cs), "ts": now_ms(), "walk_forward": res,
+               "monte_carlo": mc, "full_period": {k: v for k, v in full.items() if k not in ("equity", "trade_pnls", "_cost")},
+               "status": "done", "deployment": "APPROVED" if res["deployment"] == "APPROVED" and mc["deployment"] == "APPROVED" else "REJECTED"}
+        await db.backtests.update_one({"user_id": uid, "asset": asset}, {"$set": doc}, upsert=True)
+        WF_JOBS[key] = {"status": "done", "ts": now_ms()}
+    except Exception as e:  # noqa: BLE001
+        WF_JOBS[key] = {"status": "error", "error": str(e)[:200], "ts": now_ms()}
+
+
+@api.post("/strategy/walkforward/{asset}")
+async def strategy_walkforward_start(asset: Literal["BTC", "ETH", "SOL"], days: int = 30, user=Depends(current_user)):
+    key = f"{user['id']}:{asset}"
+    if WF_JOBS.get(key, {}).get("status") in ("queued", "running"):
+        return {"status": WF_JOBS[key]["status"], "asset": asset}
+    WF_JOBS[key] = {"status": "queued", "ts": now_ms(), "stage": "fetching candles"}
+    asyncio.create_task(_run_wf(user["id"], asset, max(7, min(days, 90))))
+    return {"status": "queued", "asset": asset, "days": days}
+
+
+@api.get("/strategy/walkforward/{asset}")
+async def strategy_walkforward_get(asset: Literal["BTC", "ETH", "SOL"], user=Depends(current_user)):
+    job = WF_JOBS.get(f"{user['id']}:{asset}") or {}
+    doc = await db.backtests.find_one({"user_id": user["id"], "asset": asset}, {"_id": 0, "user_id": 0})
+    return {"job": job, "result": doc}
+
+
 @api.get("/strategy/metrics")
 async def strategy_metrics(user=Depends(current_user)):
     bot = await get_bot(user)
@@ -955,6 +1022,8 @@ async def startup():
     await db.bot_logs.create_index([("user_id", 1), ("ts", -1)])
     await db.bot_trades.create_index([("user_id", 1), ("ts", -1)])
     await db.bot_pnl.create_index([("user_id", 1), ("ts", -1)])
+    import audit
+    await audit.ensure_indexes()
     asyncio.create_task(market.loop())
     asyncio.create_task(engine.scheduler())
     asyncio.create_task(solana_dex.watcher())
