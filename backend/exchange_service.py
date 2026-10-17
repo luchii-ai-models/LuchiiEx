@@ -219,3 +219,14 @@ async def stop_status(ex, exchange: str, symbol: str, stop_id: str) -> dict:
         except Exception:  # noqa: BLE001
             continue
     return {"state": "unknown", "price": None, "qty": 0}
+
+
+async def place_oco(ex, exchange: str, symbol: str, qty: float, sl_px: float, tp_px: float) -> dict:
+    """One-cancels-other: limit take-profit at tp_px + stop-market at sl_px, both exchange-side."""
+    amount = float(ex.amount_to_precision(symbol, qty))
+    sl, tp = float(ex.price_to_precision(symbol, sl_px)), float(ex.price_to_precision(symbol, tp_px))
+    if exchange != "okx":
+        raise RuntimeError(f"exchange-side OCO not supported on {exchange}")
+    o = await ex.create_order(symbol, "oco", "sell", amount, None,
+                              {"tdMode": "cash", "tpTriggerPx": str(tp), "tpOrdPx": str(tp), "slTriggerPx": str(sl), "slOrdPx": "-1"})
+    return {"id": o.get("id"), "price": sl, "tp": tp, "qty": amount, "kind": "oco"}

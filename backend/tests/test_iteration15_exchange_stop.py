@@ -52,3 +52,70 @@ def test_place_stop_okx_params_and_cancel_fallbacks():
         assert calls[-1] == ("cancel", "algo123", {"stop": True})
 
     asyncio.run(run())
+
+
+def test_tp_price_and_oco_params():
+    assert abs(engine.tp_price({"take_profit_pct": 0.6}, {"tp_taken": False}, 2400.0) - 2414.4) < 1e-6
+    assert engine.tp_price({"take_profit_pct": 0.6}, {"tp_taken": True}, 2400.0) == 0.0
+    assert engine.tp_price({"take_profit_pct": 0}, {"tp_taken": False}, 2400.0) == 0.0
+    calls = []
+
+    class Ex:
+        def amount_to_precision(self, s, q):
+            return f"{q:.4f}"
+
+        def price_to_precision(self, s, p):
+            return f"{p:.2f}"
+
+        async def create_order(self, symbol, typ, side, amount, price, params):
+            calls.append((typ, side, amount, params))
+            return {"id": "oco1"}
+
+    async def run():
+        st = await xs.place_oco(Ex(), "okx", "ETH/USDT", 0.0018, 2402.34, 2414.4)
+        assert st == {"id": "oco1", "price": 2402.34, "tp": 2414.4, "qty": 0.0018, "kind": "oco"}
+        assert calls[0][0] == "oco" and calls[0][3] == {"tdMode": "cash", "tpTriggerPx": "2414.4", "tpOrdPx": "2414.4", "slTriggerPx": "2402.34", "slOrdPx": "-1"}
+        try:
+            await xs.place_oco(Ex(), "coinbase", "ETH/USD", 0.0018, 2402.34, 2414.4)
+            raise AssertionError("expected unsupported")
+        except RuntimeError:
+            pass
+
+    asyncio.run(run())
+
+
+def test_arm_stop_splits_tp_slice_and_rest(monkeypatch):
+    placed = []
+
+    class Ex:
+        def amount_to_precision(self, s, q):
+            return f"{q:.6f}"
+
+        def price_to_precision(self, s, p):
+            return f"{p:.2f}"
+
+        def market(self, s):
+            return {"limits": {"amount": {"min": 0.0001}}}
+
+        async def fetch_balance(self):
+            return {"ETH": {"free": 0.0036}}
+
+        async def create_order(self, symbol, typ, side, amount, price, params):
+            placed.append((typ, amount, params))
+            return {"id": f"id{len(placed)}"}
+
+    saved = {}
+
+    async def set_bot(uid, **f):
+        saved.update(f)
+
+    async def log(*a, **k):
+        pass
+
+    monkeypatch.setattr(engine, "set_bot", set_bot)
+    monkeypatch.setattr(engine, "log", log)
+    asyncio.run(engine.arm_stop(Ex(), "okx", "u1", "ETH", "ETH/USDT", 0.0036, 2402.34, 2412.0, 2414.4, True))
+    st = saved["exchange_stops.ETH"]
+    assert [p[0] for p in placed] == ["oco", "conditional"]
+    assert placed[0][1] == 0.0018 and placed[1][1] == 0.0018
+    assert st["tp"] == 2414.4 and st["price"] == 2402.34 and len(st["legs"]) == 2 and st["qty"] == 0.0036

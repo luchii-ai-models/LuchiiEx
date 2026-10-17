@@ -9,8 +9,8 @@ import audit
 import brokers
 import strategy
 from db import db, now_ms
-from exchange_service import (all_balances, cancel_stop, client_from_doc, ensure_funds, friendly, market_order, place_stop, resolve_symbol,
-                              stop_status, total_usd)
+from exchange_service import (all_balances, cancel_stop, client_from_doc, ensure_funds, friendly, market_order, place_oco, place_stop,
+                              resolve_symbol, stop_status, total_usd)
 from market import SNAPSHOT
 
 START_CASH = 10000.0
@@ -358,7 +358,8 @@ async def execute(bot: dict, d: dict, asset: str = "BTC"):
             o = await market_order(ex, symbol, "BUY", usd, 0, price)
             qty = float(o.get("filled") or 0) or usd / price
             fill_px = float(o.get("average") or price)
-            await arm_stop(ex, creds["exchange"], uid, asset, symbol, qty, protective_stop(bot, asset, pos, fill_px, d), fill_px)
+            await arm_stop(ex, creds["exchange"], uid, asset, symbol, qty, protective_stop(bot, asset, pos, fill_px, d), fill_px,
+                           tp_price(bot, {"tp_taken": False}, fill_px), bot.get("partial_tp", True))
         else:
             await disarm_stop(ex, creds["exchange"], uid, bot, asset)
             bot = {**bot, "exchange_stops": {**(bot.get("exchange_stops") or {}), asset: None}}
@@ -400,18 +401,31 @@ async def sync_position(bot: dict, bal: dict, ex=None, exchange: str = None):
             await set_bot(uid, **pos_fields(asset, qty=round(held, 8), entry=price, peak=price, tp_taken=False))
             await log(db, uid, {"action": "HOLD", "engine": "sync", "confidence": 1.0,
                                 "reason": f"[{asset}] Synced position: {round(held, 8)} {asset} on exchange · entry set to ${price:,.2f} (P&L counted from now)"}, price, "SYNCED")
-        elif pos["position_qty"] > 0 and held < pos["position_qty"] * 0.5:
+        elif pos["position_qty"] > 0 and held < pos["position_qty"] * 0.98:
             st = (bot.get("exchange_stops") or {}).get(asset)
             if st and ex is not None:
-                status = await stop_status(ex, exchange, st["symbol"], st["id"])
-                if status["state"] == "filled":
-                    px = float(status["price"] or st["price"])
+                legs, left = st.get("legs") or [st], []
+                for leg in legs:
+                    status = await stop_status(ex, exchange, st["symbol"], leg["id"])
+                    if status["state"] != "filled":
+                        left.append(leg)
+                        continue
+                    px = float(status["price"] or leg.get("tp") or leg["price"])
+                    is_tp = bool(leg.get("tp")) and px >= leg["tp"] * 0.999
+                    partial = held >= dust
+                    kind = "TAKE PROFIT limit" if is_tp else "STOP"
+                    fresh = await db.bots.find_one({"user_id": uid})
                     await set_bot(uid, **{f"exchange_stops.{asset}": None})
-                    await record_fill(bot, "SELL", px, pos["position_qty"], f"EXCHANGE STOP #{st['id']}",
-                                      {"action": "SELL", "confidence": 1.0, "reason": f"[{asset}] EXCHANGE-SIDE STOP triggered on OKX @ ${px:,.2f} (server-independent protection)"}, asset)
+                    await record_fill(fresh, "SELL", px, min(float(leg["qty"]), pos_of(fresh, asset)["position_qty"]), f"EXCHANGE {kind.split()[0]} #{leg['id']}",
+                                      {"action": "SELL", "confidence": 1.0, "partial": partial,
+                                       "reason": f"[{asset}] EXCHANGE-SIDE {kind} filled on OKX @ ${px:,.2f} (server-independent protection)"}, asset)
+                if len(left) != len(legs):
+                    if left and held >= dust:
+                        await set_bot(uid, **{f"exchange_stops.{asset}": {**st, "legs": left, "qty": round(sum(l["qty"] for l in left), 8), "id": left[0]["id"]}})
                     continue
             gone = held < dust
-            await set_bot(uid, **pos_fields(asset, qty=0.0 if gone else round(held, 8), entry=0.0 if gone else pos["entry_price"]))
+            if gone or held < pos["position_qty"] * 0.5:
+                await set_bot(uid, **pos_fields(asset, qty=0.0 if gone else round(held, 8), entry=0.0 if gone else pos["entry_price"]))
 
 
 def protective_stop(bot: dict, asset: str, pos: dict, entry: float, d: dict = None) -> float:
@@ -426,33 +440,54 @@ def protective_stop(bot: dict, asset: str, pos: dict, entry: float, d: dict = No
     return max(cands)
 
 
-async def arm_stop(ex, exchange: str, uid: str, asset: str, symbol: str, qty: float, stop_px: float, price: float):
+def tp_price(bot: dict, pos: dict, entry: float) -> float:
+    tp = float(bot.get("take_profit_pct") or 0)
+    return entry * (1 + tp / 100) if tp and entry and not pos.get("tp_taken") else 0.0
+
+
+async def arm_stop(ex, exchange: str, uid: str, asset: str, symbol: str, qty: float, stop_px: float, price: float, tp_px: float = 0.0, partial: bool = True):
+    """Arm exchange-side protection: OCO (limit TP + stop) on the TP slice, plain stop on the rest."""
     if not stop_px or stop_px >= price or qty <= 0:
         return
     try:
         free = await free_of(ex, asset)
         qty = min(qty, free) if free > 0 else qty
-        if hasattr(ex, "amount_to_precision"):
-            step = float(ex.amount_to_precision(symbol, qty))
-            qty = step if step <= free or free <= 0 else float(ex.amount_to_precision(symbol, free * 0.999))
-        st = await place_stop(ex, exchange, symbol, qty, stop_px)
-        await set_bot(uid, **{f"exchange_stops.{asset}": {**st, "symbol": symbol, "ts": now_ms()}, "stop_retry_ts": 0})
+        step = float(ex.amount_to_precision(symbol, qty))
+        qty = step if step <= free or free <= 0 else float(ex.amount_to_precision(symbol, free * 0.999))
+        min_qty = float(((ex.market(symbol).get("limits") or {}).get("amount") or {}).get("min") or 0)
+        legs = []
+        if tp_px and tp_px > price:
+            half = float(ex.amount_to_precision(symbol, qty / 2))
+            rest = float(ex.amount_to_precision(symbol, qty - half))
+            if partial and half >= max(min_qty, 1e-8) and rest >= max(min_qty, 1e-8):
+                legs.append(await place_oco(ex, exchange, symbol, half, stop_px, tp_px))
+                legs.append({**await place_stop(ex, exchange, symbol, rest, stop_px), "kind": "sl"})
+            else:
+                legs.append(await place_oco(ex, exchange, symbol, qty, stop_px, tp_px))
+        else:
+            legs.append({**await place_stop(ex, exchange, symbol, qty, stop_px), "kind": "sl"})
+        st = {"id": legs[0]["id"], "price": legs[0]["price"], "tp": tp_px if tp_px > price else 0.0, "qty": round(sum(l["qty"] for l in legs), 8),
+              "legs": legs, "symbol": symbol, "ts": now_ms()}
+        await set_bot(uid, **{f"exchange_stops.{asset}": st, "stop_retry_ts": 0})
+        tp_txt = f" · TP limit @ ${st['tp']:,.2f} on {legs[0]['qty']} {asset}" if st["tp"] else ""
         await log(db, uid, {"action": "HOLD", "engine": "guard", "confidence": 1.0,
-                            "reason": f"[{asset}] exchange-side STOP armed on {exchange} @ ${st['price']:,.2f} for {st['qty']} {asset} · fires even if this server is offline"}, price, f"STOP #{st['id']}", asset)
+                            "reason": f"[{asset}] exchange-side protection armed on {exchange}: STOP @ ${st['price']:,.2f} for {st['qty']} {asset}{tp_txt} · fires even if this server is offline"},
+                  price, f"STOP #{st['id']}", asset)
     except Exception as e:
         await set_bot(uid, stop_retry_ts=time.time())
         await log(db, uid, {"action": "HOLD", "engine": "guard", "confidence": 1.0,
-                            "reason": f"[{asset}] could not arm exchange-side stop: {friendly(e)[:140]} · engine stop still active · retry in 10 min"}, price, "REJECTED", asset)
+                            "reason": f"[{asset}] could not arm exchange-side protection: {friendly(e)[:140]} · engine stop/TP still active · retry in 10 min"}, price, "REJECTED", asset)
 
 
 async def disarm_stop(ex, exchange: str, uid: str, bot: dict, asset: str):
     st = (bot.get("exchange_stops") or {}).get(asset)
     if not st:
         return
-    try:
-        await cancel_stop(ex, exchange, st["symbol"], st["id"])
-    except Exception as e:
-        log_.warning("cancel stop failed: %s", e)
+    for leg in st.get("legs") or [st]:
+        try:
+            await cancel_stop(ex, exchange, st["symbol"], leg["id"])
+        except Exception as e:
+            log_.warning("cancel stop failed: %s", e)
     await set_bot(uid, **{f"exchange_stops.{asset}": None})
 
 
@@ -468,13 +503,15 @@ async def sync_stops(ex, exchange: str, bot: dict):
         if pos["position_qty"] <= 0 or not price:
             continue
         want = protective_stop(bot, asset, pos, pos["entry_price"])
+        want_tp = tp_price(bot, pos, pos["entry_price"])
         if not want or want >= price:
             continue
-        if st and want <= st["price"] * 1.001 and abs(st["qty"] - pos["position_qty"]) / pos["position_qty"] < 0.02:
+        if st and want <= st["price"] * 1.001 and abs(st["qty"] - pos["position_qty"]) / pos["position_qty"] < 0.02 \
+                and abs((st.get("tp") or 0) - (want_tp if want_tp > price else 0)) <= max(price * 0.0005, 0.01):
             continue
         symbol = st["symbol"] if st else await resolve_symbol(ex, exchange, asset)
         await disarm_stop(ex, exchange, uid, bot, asset)
-        await arm_stop(ex, exchange, uid, asset, symbol, pos["position_qty"], want, price)
+        await arm_stop(ex, exchange, uid, asset, symbol, pos["position_qty"], want, price, want_tp, bot.get("partial_tp", True))
 
 
 async def refresh_live_equity(bot: dict):
