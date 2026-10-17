@@ -217,23 +217,14 @@ WF_JOBS: dict = {}
 
 
 async def _run_wf(uid: str, asset: str, days: int):
+    import concurrent.futures
     import luchii_backtest as lb
     key = f"{uid}:{asset}"
     try:
-        loop = asyncio.get_running_loop()
-        bars = days * 1440 + 300
-        cs = await loop.run_in_executor(None, lambda: lb.fetch_candles(asset, bars))
-        btc = cs if asset == "BTC" else await loop.run_in_executor(None, lambda: lb.fetch_candles("BTC", bars))
-        WF_JOBS[key].update(status="running", candles=len(cs), stage="walk-forward")
-        days_avail = max(1, int((cs[-1]["t"] - cs[0]["t"]) / lb.DAY))
-        tr, va, te = (20, 5, 5) if days_avail >= 30 else (max(2, days_avail * 2 // 3), max(1, days_avail // 6), max(1, days_avail // 6))
-        res = await loop.run_in_executor(None, lambda: lb.walk_forward_days(cs, btc, tr, va, te, step_days=max(1, days_avail // 10)))
-        res["window_days"] = {"train": tr, "validate": va, "test": te, "available": days_avail}
-        full = await loop.run_in_executor(None, lambda: lb.run_backtest(cs, res["windows"][-1]["params"] if res["windows"] else None, btc_candles=btc))
-        mc = lb.monte_carlo_ruin(full["trade_pnls"], starting_equity=10000.0)
-        doc = {"user_id": uid, "asset": asset, "days": days, "candles": len(cs), "ts": now_ms(), "walk_forward": res,
-               "monte_carlo": mc, "full_period": {k: v for k, v in full.items() if k not in ("equity", "trade_pnls", "_cost")},
-               "status": "done", "deployment": "APPROVED" if res["deployment"] == "APPROVED" and mc["deployment"] == "APPROVED" else "REJECTED"}
+        WF_JOBS[key].update(status="running", stage="fetching candles + walk-forward (separate process)")
+        with concurrent.futures.ProcessPoolExecutor(max_workers=1) as pool:
+            doc = await asyncio.get_running_loop().run_in_executor(pool, lb.validation_job, asset, days)
+        doc.update(user_id=uid, ts=now_ms(), status="done")
         await db.backtests.update_one({"user_id": uid, "asset": asset}, {"$set": doc}, upsert=True)
         WF_JOBS[key] = {"status": "done", "ts": now_ms()}
     except Exception as e:  # noqa: BLE001

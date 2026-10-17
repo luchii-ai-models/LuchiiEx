@@ -330,3 +330,19 @@ def monte_carlo_ruin(trade_pnls: list, simulations=5000, starting_equity=1000.0,
             "equity_p05": round(q(finals, 0.05), 2), "equity_median": round(q(finals, 0.5), 2), "equity_p95": round(q(finals, 0.95), 2), "expectancy": round(exp, 4),
             "capital_required_for_dd95_at_20pct": round(starting_equity * dd95 / 20, 2) if dd95 else None,
             "deployment": "APPROVED" if all(checks.values()) else "REJECTED", "checks": checks}
+
+
+def validation_job(asset: str, days: int) -> dict:
+    """Full fetch + walk-forward + Monte Carlo. Runs in a separate PROCESS so it can never starve the trading loop."""
+    bars = days * 1440 + 300
+    cs = fetch_candles(asset, bars)
+    btc = cs if asset == "BTC" else fetch_candles("BTC", bars)
+    days_avail = max(1, int((cs[-1]["t"] - cs[0]["t"]) / DAY))
+    tr, va, te = (20, 5, 5) if days_avail >= 30 else (max(2, days_avail * 2 // 3), max(1, days_avail // 6), max(1, days_avail // 6))
+    res = walk_forward_days(cs, btc, tr, va, te, step_days=max(1, days_avail // 10))
+    res["window_days"] = {"train": tr, "validate": va, "test": te, "available": days_avail}
+    full = run_backtest(cs, res["windows"][-1]["params"] if res["windows"] else None, btc_candles=btc)
+    mc = monte_carlo_ruin(full["trade_pnls"], starting_equity=10000.0)
+    return {"asset": asset, "days": days, "candles": len(cs), "walk_forward": res, "monte_carlo": mc,
+            "full_period": {k: v for k, v in full.items() if k not in ("equity", "trade_pnls", "_cost")},
+            "deployment": "APPROVED" if res["deployment"] == "APPROVED" and mc["deployment"] == "APPROVED" else "REJECTED"}

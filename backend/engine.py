@@ -193,6 +193,11 @@ def signal(bot: dict, asset: str = "BTC") -> dict:
         elif sl and move <= -sl:
             return {"action": "SELL", "confidence": 0.95, "reason": f"[{asset}] STOP LOSS hit {move:+.2f}% (limit -{sl}%) · RSI {r}"}
     if flat and s7 > s25 and r < rsi_cap:
+        last_stop = (bot.get("last_stop") or {}).get(asset) or {}
+        cooldown = float(bot.get("reentry_cooldown_min", 15))
+        if last_stop and time.time() - last_stop.get("ts", 0) < cooldown * 60 and price <= last_stop.get("price", 0) * 1.003:
+            left = round(cooldown - (time.time() - last_stop["ts"]) / 60)
+            return {"action": "HOLD", "confidence": conf, "reason": f"[{asset}] re-entry cooldown after stop-out · {left} min left unless price clears ${last_stop['price'] * 1.003:,.2f} · RSI {r}"}
         if bot.get("trend_filter", True):
             s25_prev = _sma(closes[:-5], ns)
             if price < s25 or (not agg and s25_prev and s25 <= s25_prev):
@@ -231,6 +236,8 @@ async def record_fill(bot: dict, side: str, price: float, qty: float, fill: str,
     pos = pos_of(bot, asset)
     pnl = 0.0
     upd = {"trades_count": bot["trades_count"] + 1}
+    if side == "SELL" and "STOP" in (d.get("reason") or "").upper() and not (d.get("partial") or d.get("fraction")):
+        upd[f"last_stop.{asset}"] = {"ts": time.time(), "price": price}
     if side == "BUY":
         upd.update(pos_fields(asset, qty=qty, entry=price, peak=price, tp_taken=False, stop=d.get("stop") or 0.0, tiers=0, atr=d.get("entry_atr") or 0.0))
         if bot["mode"] != "live":
@@ -539,8 +546,14 @@ async def mirror_all(db_, bot, side):
 
 async def scheduler():
     every = float(os.environ["BOT_TICK_SECONDS"])
+    last = time.time()
     while True:
         await asyncio.sleep(every)
+        gap = time.time() - last
+        if gap > every * 4:
+            log_.error("TICK WATCHDOG: trading loop starved for %.0fs (expected %.0fs)", gap, every)
+            await db.audit_log.insert_one({"event": "tick_starved", "seconds": round(gap), "ts": now_ms()})
+        last = time.time()
         async for bot in db.bots.find({"status": "running"}):
             try:
                 await tick_bot(bot)
