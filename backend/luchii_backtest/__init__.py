@@ -100,9 +100,10 @@ def indicator_series(candles: list) -> list:
 def run_backtest(candles: list, params: dict = None, cash: float = 10000.0, fee: float = 0.001, slippage: float = 0.0005,
                  btc_candles: list = None) -> dict:
     p = {"score_min": 80, "adx_min": 25, "rsi_min": 55, "trend_min": 0.08, "volume_min": 1.5, "atr_stop": 2.5, **(params or {})}
-    old = dict(strategy.RULES["entry"]), strategy.RULES["risk"]["atr_stop_mult"]
-    strategy.RULES["entry"].update(score_min=p["score_min"], adx_min=p["adx_min"], rsi_min=p["rsi_min"], trend_pct_min=p["trend_min"], volume_ratio_min=p["volume_min"])
-    strategy.RULES["risk"]["atr_stop_mult"] = p["atr_stop"]
+    override = {**strategy.RULES, "entry": {**strategy.RULES["entry"], "score_min": p["score_min"], "adx_min": p["adx_min"], "rsi_min": p["rsi_min"],
+                                           "trend_pct_min": p["trend_min"], "volume_ratio_min": p["volume_min"]},
+                "risk": {**strategy.RULES["risk"], "atr_stop_mult": p["atr_stop"]}}
+    strategy.set_rules_override(override)
     equity, trades, regimes = [cash], [], []
     pos = {"position_qty": 0.0, "entry_price": 0.0, "peak_price": 0.0, "stop_price": 0.0, "tiers_done": 0, "entry_atr": 0.0}
     cost_basis = 0.0
@@ -145,8 +146,7 @@ def run_backtest(candles: list, params: dict = None, cash: float = 10000.0, fee:
                     pos.update(position_qty=qty, entry_price=entry, peak_price=entry, stop_price=d["stop"], tiers_done=0, entry_atr=d["entry_atr"])
             equity.append(cash + pos["position_qty"] * nxt["c"])
     finally:
-        strategy.RULES["entry"].update(old[0])
-        strategy.RULES["risk"]["atr_stop_mult"] = old[1]
+        strategy.set_rules_override(None)
     wins = [t for t in trades if t > 0]
     by_regime = {r: profit_factor([t for t, rr in zip(trades, regimes) if rr == r]) for r in strategy.REGIMES}
     return {"trades": len(trades), "net_profit": round(sum(trades), 4), "profit_factor": profit_factor(trades),

@@ -109,3 +109,6 @@ User choices: copy from trade-bridge-73; use the env values exactly; no Emergent
 - luchii_backtest: indicator_series cache (700x faster), day_windows/walk_forward_days (train20/val5/test5 sliding, train PF>=1.10, val PF>=1.0), approve_walk_forward (avg PF>=1.10, DD<=15, WR>=35, expectancy>0, >=5 windows), monte_carlo_ruin (5000 bootstrap; ruin<5%, DD95<20%, expectancy>0).
 - Endpoints: GET /api/strategy/montecarlo (live audit trades), POST/GET /api/strategy/walkforward/{asset}?days=30 (background job, result in db.backtests).
 - ValidationCard on dashboard: agent votes, Monte Carlo, run/view walk-forward.
+- Fix (iteration_13 HIGH): backtests no longer mutate live strategy.RULES — thread-local override via strategy.rules()/set_rules_override.
+- Tested: iteration_13 31/31 new tests, full regression 259/260 (1 order-dependent flaky test in iteration9, passes alone).
+- Honest 30-day BTC result (Coinbase 1-min, 43,500 candles): walk-forward 1 window skipped (train PF < 1.10), full-period 130 trades, expectancy -$22/trade, DD95 36% → REJECTED. LUCHII_003 has NO proven edge on 1-min BTC yet.

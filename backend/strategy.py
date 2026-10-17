@@ -1,3 +1,4 @@
+import threading
 import math
 
 RULES = {
@@ -6,6 +7,18 @@ RULES = {
     "tiers": [(1.0, 0.25), (2.5, 0.25), (5.0, 0.25)],
     "trail": {"break_even": 0.5, "profit_lock": 1.0, "lock_mult": 1.0025, "atr3_at": 2.0, "atr2_at": 5.0},
 }
+
+_LOCAL = threading.local()
+
+
+def rules() -> dict:
+    """Active rule set: a thread-local override (backtests) or the live RULES."""
+    return getattr(_LOCAL, "override", None) or RULES
+
+
+def set_rules_override(override: dict | None):
+    _LOCAL.override = override
+
 
 
 def nan(*vals) -> bool:
@@ -138,15 +151,15 @@ def indicators(candles: list, price: float, rsi: float) -> dict:
 
 
 def entry_score(i: dict) -> tuple:
-    checks = [("SMA5>13", i["sma5"] > i["sma13"]), ("EMA20>50", i["ema20"] > i["ema50"]), (f"RSI>{RULES['entry']['rsi_min']}", i["rsi"] > RULES["entry"]["rsi_min"]),
-              (f"VOL>{RULES['entry']['volume_ratio_min']}x", i["volume_ratio"] > RULES["entry"]["volume_ratio_min"]),
-              (f"TREND>{RULES['entry']['trend_pct_min']}%", i["trend_pct"] > RULES["entry"]["trend_pct_min"])]
+    checks = [("SMA5>13", i["sma5"] > i["sma13"]), ("EMA20>50", i["ema20"] > i["ema50"]), (f"RSI>{rules()['entry']['rsi_min']}", i["rsi"] > rules()["entry"]["rsi_min"]),
+              (f"VOL>{rules()['entry']['volume_ratio_min']}x", i["volume_ratio"] > rules()["entry"]["volume_ratio_min"]),
+              (f"TREND>{rules()['entry']['trend_pct_min']}%", i["trend_pct"] > rules()["entry"]["trend_pct_min"])]
     score = sum(20 for _, ok in checks if ok)
     return score, [name for name, ok in checks if not ok]
 
 
 def risk_pct(score: int, regime: str) -> float:
-    r = RULES["risk"]
+    r = rules()["risk"]
     base = r["score90"] if score >= 90 else r["score80"] if score >= 80 else r["score70"] if score >= 70 else 0.0
     if regime == "TREND_BEAR":
         return min(base, r["bear"])
@@ -161,7 +174,7 @@ def position_size(cash, risk, entry, stop):
 
 
 def update_stop(entry, highest, pnl_pct, atr_v, existing):
-    t = RULES["trail"]
+    t = rules()["trail"]
     stop = existing
     if pnl_pct >= t["break_even"]:
         stop = max(stop, entry)
@@ -186,16 +199,16 @@ def evaluate(asset: str, i: dict, btc: dict, pos: dict, weights: dict | None = N
         entry, highest = pos["entry_price"], max(pos["peak_price"] or 0, pos["entry_price"], price)
         pnl = (price - entry) / entry * 100
         atr_v = pos.get("entry_atr") or (None if nan(i.get("atr")) else i["atr"])
-        existing = pos.get("stop_price") or (entry - atr_v * RULES["risk"]["atr_stop_mult"] if atr_v else 0)
+        existing = pos.get("stop_price") or (entry - atr_v * rules()["risk"]["atr_stop_mult"] if atr_v else 0)
         stop = update_stop(entry, highest, pnl, atr_v, existing)
         tiers = int(pos.get("tiers_done") or 0)
         if stop and price <= stop:
             why = "STOP" if stop < entry else "BREAK-EVEN STOP" if stop == entry else "TRAILING STOP"
             return {**base, "action": "SELL", "stop": stop, "reason": f"[{asset}] {why} hit ${stop:,.2f} · {pnl:+.2f}% · peak ${highest:,.2f}"}
-        if tiers < len(RULES["tiers"]) and pnl >= RULES["tiers"][tiers][0]:
-            frac = RULES["tiers"][tiers][1] / (1 - 0.25 * tiers)
+        if tiers < len(rules()["tiers"]) and pnl >= rules()["tiers"][tiers][0]:
+            frac = rules()["tiers"][tiers][1] / (1 - 0.25 * tiers)
             return {**base, "action": "SELL", "fraction": round(frac, 4), "tier": tiers + 1, "stop": stop,
-                    "reason": f"[{asset}] TP{tiers + 1} +{RULES['tiers'][tiers][0]}% hit ({pnl:+.2f}%) · selling 25% of original · stop → ${stop:,.2f}"}
+                    "reason": f"[{asset}] TP{tiers + 1} +{rules()['tiers'][tiers][0]}% hit ({pnl:+.2f}%) · selling 25% of original · stop → ${stop:,.2f}"}
         return {**base, "action": "HOLD", "stop": stop, "reason": f"[{asset}] in position {pnl:+.2f}% · stop ${stop:,.2f} · TP{tiers + 1} next · regime {i.get('regime')}"}
     if warm:
         return {**base, "action": "HOLD", "reason": f"[{asset}] warming up indicators (need 200 candles)"}
@@ -210,11 +223,11 @@ def evaluate(asset: str, i: dict, btc: dict, pos: dict, weights: dict | None = N
     if asset != "BTC" and (reg == "TREND_BEAR" or btc.get("regime") == "TREND_BEAR"):
         return {**base, "action": "HOLD", "reason": f"[{asset}] TREND_BEAR regime ({'BTC' if btc.get('regime') == 'TREND_BEAR' else asset}) · no alt longs · score {score}/100"}
     gates = []
-    if i["adx"] <= RULES["entry"]["adx_min"]:
+    if i["adx"] <= rules()["entry"]["adx_min"]:
         gates.append(f"ADX {i['adx']:.0f}≤25")
     if i["atr"] <= i["atr_ma"]:
         gates.append("ATR not expanding")
-    if score < RULES["entry"]["score_min"] or gates:
+    if score < rules()["entry"]["score_min"] or gates:
         return {**base, "action": "HOLD", "reason": f"[{asset}] score {score}/100 · {reg} · missing {', '.join(missing + gates) or '-'}"}
     import agents
     v = agents.vote(i, weights)
@@ -222,6 +235,6 @@ def evaluate(asset: str, i: dict, btc: dict, pos: dict, weights: dict | None = N
     if not v["allowed"]:
         return {**base, "action": "HOLD", "reason": f"[{asset}] agent vote · {v['reason']} · score {score}/100"}
     risk = risk_pct(score, reg)
-    stop = price - i["atr"] * RULES["risk"]["atr_stop_mult"]
+    stop = price - i["atr"] * rules()["risk"]["atr_stop_mult"]
     return {**base, "action": "BUY", "risk": risk, "stop": stop, "entry_atr": i["atr"], "winner_agent": v["winner"],
             "reason": f"[{asset}] BUY · score {score}/100 · {reg} · trend {i['trend_pct']:+.2f}% · vol {i['volume_ratio']:.1f}x · ADX {i['adx']:.0f} · risk {risk * 100:.2g}% · stop ${stop:,.2f}"}
