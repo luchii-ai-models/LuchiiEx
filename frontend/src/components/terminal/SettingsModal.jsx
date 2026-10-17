@@ -120,6 +120,7 @@ function ConfigTab({ bot, refresh, connected }) {
           ? "Score ≥80 entries (SMA5/13, EMA20/50, RSI>55, volume>1.5x, trend>0.08%) + ADX>25 + ATR expansion · BULL/BEAR/CHOP regime (no trades in chop) · BTC master filter for ETH/SOL · risk 1–1.5% of balance with ATR×2.5 stop · TP 25% at +1%/+2.5%/+5% · break-even at +0.5%, lock at +1%, ATR trail."
           : "SMA 5/13 cross scalp with the % size, TP/SL and filters below."}</p>
       </div>
+      <Toggle on={maker} onClick={() => setMaker(!maker)} testId="maker-entries-toggle" labelOn="MAKER ENTRIES ON · POST-ONLY LIMIT AT BID (LOWER FEE), MARKET FALLBACK AFTER 20S" labelOff="MAKER ENTRIES OFF · MARKET BUY (TAKER FEE)" />
       {!luchii && (<>
       <Toggle on={aggr} onClick={() => setAggr(!aggr)} testId="aggressive-toggle" labelOn="AGGRESSIVE · SMA 5/13 · RSI CAP 80 · RELAXED FILTERS" labelOff="STANDARD · SMA 7/25 · RSI CAP 70 · FULL FILTERS" />
       <div className="grid grid-cols-2 gap-4 items-end">
@@ -146,7 +147,6 @@ function ConfigTab({ bot, refresh, connected }) {
       <p className="text-[9px] text-term-muted -mt-3">The bot checks the market every 5 seconds and exits the position as soon as either target is hit. 0 disables a target.</p>
       <Toggle on={trail} onClick={() => setTrail(!trail)} testId="trailing-stop-toggle" labelOn="TRAILING STOP ON · STOP FOLLOWS THE PEAK PRICE" labelOff="TRAILING STOP OFF · FIXED STOP FROM ENTRY" />
       <Toggle on={partial} onClick={() => setPartial(!partial)} testId="partial-tp-toggle" labelOn="PARTIAL TAKE PROFIT ON · SELL HALF AT TARGET, REST RIDES" labelOff="PARTIAL TAKE PROFIT OFF · SELL ALL AT TARGET" />
-      <Toggle on={maker} onClick={() => setMaker(!maker)} testId="maker-entries-toggle" labelOn="MAKER ENTRIES ON · POST-ONLY LIMIT AT BID (LOWER FEE), MARKET FALLBACK AFTER 20S" labelOff="MAKER ENTRIES OFF · MARKET BUY (TAKER FEE)" />
       <p className="text-[9px] text-term-muted -mt-3">With trailing on, the stop-loss % is measured from the highest price since entry, so gains get locked in as the price rises.</p>
       <div>
         <Label>ENTRY FILTERS{aggr ? " · RELAXED BY AGGRESSIVE MODE" : ""}</Label>

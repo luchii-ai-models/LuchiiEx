@@ -1,0 +1,46 @@
+{
+  "summary": "Iteration 17 features (break-even+fees lock, maker post-only entries w/ market fallback, maker_entries config, 24h log API, UI fixes). Backend: 34/34 pytest pass (new test_iteration17_fee_lock_ui.py 14 tests + it16/it15/it8 regression 20). Maker path tested with fake ccxt only, no real orders. Frontend: title, password eye toggle, header without chat/help, chat/help inside Settings, full-screen 24h log + filters (checked with seeded logs: ALL4/BUY1/SELL1/FILLS3/HOLD2, >24h row left out), footer-info-link -> /info/capabilities with centered tabs, info-tab-pricing navigation, boot screen logo (caught live: img alt 'Frasberg AI · Luchii', no BOOTING text in src), mobile 390px with no horizontal overflow. One UX gap: the maker toggle is hidden for the default LUCHII_003 strategy.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "exchange_service.maker_buy", "issue": "Possible double buy. After the 20s wait, if cancel_order raises because the limit filled at that moment, the except swallows it and returns None. market_order then places a market BUY too, so the position can end up 2x size. Fix: on cancel failure, re-fetch the order and return it with maker True if it filled, and only fall back to market when filled == 0."},
+      {"endpoint": "exchange_service.maker_buy (partial fill)", "issue": "On a partial maker fill the order comes back with partial_maker and the unfilled rest is never bought. The position is smaller than sized. This may be acceptable but it is not logged as a reduced size."},
+      {"endpoint": "engine.execute maker wait", "issue": "maker_buy waits inside execute() for up to 20s per asset, polling every 2s. If the tick loop awaits execute in sequence, other assets' exits/stops are delayed by up to 20s while a maker entry is pending."},
+      {"endpoint": "engine.signal / protective_stop break-even threshold", "issue": "peak_move >= fee_rt + 0.1 has no epsilon. With peak exactly entry*1.0032, (100.32-100)/100*100 = 0.31999... and the lock does not arm in protective_stop. The TP check uses -1e-9, so use the same epsilon here."},
+      {"endpoint": "engine fee model", "issue": "When maker_entries fills as maker, fee_rate stays the taker rate, so the break-even floor and TP stay conservative (slightly over-estimated). Not a bug, but the 'lower fee' benefit is not reflected in the targets."},
+      {"endpoint": "POST /api/auth/login (pre-existing)", "issue": "The lockout key uses request.client.host, which behind the k8s ingress is the proxy/pod IP, not the user. 6 bad attempts gave 401 x6 and no 429, so brute-force lockout is not effective in preview. Use the X-Forwarded-For first hop or key on email only."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "SettingsModal ConfigTab", "issue": "maker-entries-toggle only renders when strategy=AGGRESSIVE SCALP (it sits inside {!luchii && ...}). engine.execute applies maker_entries to every live BUY, including LUCHII_003, the default strategy. So LUCHII_003 users cannot see or turn off maker entries. Move the toggle outside the !luchii block.", "selector": "[data-testid=maker-entries-toggle]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "SettingsModal ConfigTab", "issues": ["The trailing-stop help text ('With trailing on, the stop-loss % is measured from the highest price...') now sits under the maker toggle, away from the trailing toggle it describes."]},
+      {"screen": "Full log modal", "issues": ["The first row gets the animate-flash-in amber highlight in full-screen mode, so it looks selected.", "No Escape-key close.", "Rows have no data-testid."]},
+      {"screen": "Info page mobile 390px", "issues": ["13 tabs wrap into about 8 rows and push the content below the fold. A horizontal scroll strip or a select would be better. No overflow."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iteration17_fee_lock_ui.py", "/app/backend/tests/it17_seed_logs_user.py", "/app/test_reports/pytest/pytest_it17.xml"],
+  "action_items": [
+    "Fix the maker_buy cancel-race double-buy: on cancel exception, fetch the order and return it if filled > 0. Never fall through to a market buy when the limit may have filled.",
+    "Show maker-entries-toggle for the LUCHII_003 strategy too, or skip maker for luchii003 in execute.",
+    "Add an epsilon (-1e-9) to the break-even threshold comparison in signal() and protective_stop().",
+    "Optional: run the maker wait off the main tick path (or shorten it) so other assets' exits are not blocked.",
+    "Optional (pre-existing): base the login lockout identifier on the forwarded client IP or the email."
+  ],
+  "critical_code_review_comments": [
+    "exchange_service.maker_buy swallows all exceptions around cancel/fetch, which can cause a duplicate market order (see above).",
+    "SettingsModal.jsx is 536 lines and close to the 700-line limit. Consider splitting the tabs into separate files.",
+    "The break-even lock only exists in the aggressive signal() path. LUCHII_003 relies on strategy.evaluate's own break-even logic. Confirm it is the intended behaviour for 'winner never turns into a net loss'."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration17_fee_lock_ui.py", "/app/backend/tests/it17_seed_logs_user.py"],
+  "success_rate": {"backend": "100% (34/34 tests); 1 race-condition bug found in code review", "frontend": "95% (all requested flows pass; maker toggle hidden for the default strategy)"},
+  "seed_data_creation": "Registered TEST users test_it17_*@example.com and test_it17ui_*@example.com. Inserted 5 bot_logs for the it17ui user (1 older than 24h). Admin bot config was not changed (strategy and maker toggles were clicked but not saved), and the admin bot was not started or stopped.",
+  "test_credentials": "admin@gravia.io / Gravia@2026 (from /app/memory/test_credentials.md)",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: cd /app/backend && export $(grep REACT_APP_BACKEND_URL /app/frontend/.env) && pytest tests/test_iteration17_fee_lock_ui.py tests/test_iteration16_fee_aware_tp.py tests/test_iteration15_exchange_stop.py tests/test_iteration8_exit_rules.py -n0. FakeEx in the it17 test can be extended with cancel_raises=True plus a filled state to reproduce the double-buy race. For full-log UI with data, run tests/it17_seed_logs_user.py; it writes the token to stdout, then set localStorage gravia_token.",
+  "rca of the issue": "Double-buy risk: maker_buy line ~208-215. try: cancel_order; fetch_order ... except: pass; return None. If the post-only limit fills between the last poll and the cancel, OKX rejects the cancel (order already filled), the exception is swallowed, None is returned, and market_order then creates a market buy. Mitigation: always fetch_order after a cancel attempt, in its own try block, and return it with maker True if filled > 0."
+}
