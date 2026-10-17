@@ -142,7 +142,7 @@ class TestEntryGuard:
         assert engine.decide({"strategy": "luchii003"}, "BTC")["action"] == "BUY"
         monkeypatch.setattr(engine, "signal", lambda b, a: {"action": "BUY", "score": 80, "confidence": 0.9, "reason": "x"})
         snap["markets"] = {"BTC": mk(cs, 75.0)}
-        assert engine.decide({"strategy": "aggressive"}, "BTC")["action"] == "HOLD"
+        assert engine.decide({"strategy": "aggressive"}, "BTC")["action"] == "BUY"  # owner-chosen aggressive bypasses hard filters
 
 
 # --- DB level kill switch

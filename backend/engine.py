@@ -118,7 +118,13 @@ def risk_multiplier(pf, pf_inf: bool) -> float:
 
 
 def decide(bot: dict, asset: str) -> dict:
-    d = signal(bot, asset) if bot.get("strategy", "luchii003") == "aggressive" else luchii_signal(bot, asset)
+    if bot.get("strategy", "luchii003") == "aggressive":
+        d = signal(bot, asset)
+        if d.get("action") == "BUY":
+            d["regime"] = snapshot(asset)[0].get("regime", "CHOP")
+            d["reason"] += " · AGGRESSIVE: regime/score/BTC filters bypassed by owner choice"
+        return d
+    d = luchii_signal(bot, asset)
     if d.get("action") == "BUY":
         if "regime" not in d:
             i, _ = snapshot(asset)
