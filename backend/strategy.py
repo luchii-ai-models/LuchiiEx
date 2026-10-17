@@ -202,13 +202,14 @@ def evaluate(asset: str, i: dict, btc: dict, pos: dict, weights: dict | None = N
         existing = pos.get("stop_price") or (entry - atr_v * rules()["risk"]["atr_stop_mult"] if atr_v else 0)
         stop = update_stop(entry, highest, pnl, atr_v, existing)
         tiers = int(pos.get("tiers_done") or 0)
+        fee = float(pos.get("fee_pct") or 0)
         if stop and price <= stop:
             why = "STOP" if stop < entry else "BREAK-EVEN STOP" if stop == entry else "TRAILING STOP"
             return {**base, "action": "SELL", "stop": stop, "reason": f"[{asset}] {why} hit ${stop:,.2f} · {pnl:+.2f}% · peak ${highest:,.2f}"}
-        if tiers < len(rules()["tiers"]) and pnl >= rules()["tiers"][tiers][0]:
+        if tiers < len(rules()["tiers"]) and pnl >= rules()["tiers"][tiers][0] + fee:
             frac = rules()["tiers"][tiers][1] / (1 - 0.25 * tiers)
             return {**base, "action": "SELL", "fraction": round(frac, 4), "tier": tiers + 1, "stop": stop,
-                    "reason": f"[{asset}] TP{tiers + 1} +{rules()['tiers'][tiers][0]}% hit ({pnl:+.2f}%) · selling 25% of original · stop → ${stop:,.2f}"}
+                    "reason": f"[{asset}] TP{tiers + 1} +{rules()['tiers'][tiers][0]}%{f' +{fee:.2f}% fees' if fee else ''} hit ({pnl:+.2f}%) · selling 25% of original · stop → ${stop:,.2f}"}
         return {**base, "action": "HOLD", "stop": stop, "reason": f"[{asset}] in position {pnl:+.2f}% · stop ${stop:,.2f} · TP{tiers + 1} next · regime {i.get('regime')}"}
     if warm:
         return {**base, "action": "HOLD", "reason": f"[{asset}] warming up indicators (need 200 candles)"}

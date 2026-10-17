@@ -55,7 +55,7 @@ def test_place_stop_okx_params_and_cancel_fallbacks():
 
 
 def test_tp_price_and_oco_params():
-    assert abs(engine.tp_price({"take_profit_pct": 0.6}, {"tp_taken": False}, 2400.0) - 2414.4) < 1e-6
+    assert abs(engine.tp_price({"take_profit_pct": 0.6, "fee_rate": 0.001}, {"tp_taken": False}, 2400.0) - 2400 * 1.0082) < 1e-6  # fee-aware
     assert engine.tp_price({"take_profit_pct": 0.6}, {"tp_taken": True}, 2400.0) == 0.0
     assert engine.tp_price({"take_profit_pct": 0}, {"tp_taken": False}, 2400.0) == 0.0
     calls = []

@@ -71,6 +71,22 @@ def pos_fields(asset: str, qty=None, entry=None, peak=None, tp_taken=None, stop=
 AGENT_WEIGHTS: dict = {}
 
 
+def fee_round_trip_pct(bot: dict) -> float:
+    """Taker fee both ways (from the exchange market, default 0.10%) + 0.02% slippage buffer, in percent."""
+    rate = float(bot.get("fee_rate") or 0.001)
+    return round(rate * 2 * 100 + 0.02, 4)
+
+
+def net_tp_pct(bot: dict) -> float:
+    tp = float(bot.get("take_profit_pct") or 0)
+    return round(tp + fee_round_trip_pct(bot), 4) if tp else 0.0
+
+
+def net_pnl(bot: dict, entry: float, exit_px: float, qty: float) -> float:
+    rate = float(bot.get("fee_rate") or 0.001)
+    return round((exit_px - entry) * qty - (entry + exit_px) * qty * rate, 4)
+
+
 def luchii_signal(bot: dict, asset: str) -> dict:
     m = mkt(asset)
     if not m.get("candles"):
@@ -78,7 +94,7 @@ def luchii_signal(bot: dict, asset: str) -> dict:
     i = strategy.indicators(m["candles"], m["price"], m.get("rsi"))
     b = mkt("BTC")
     btc = strategy.indicators(b["candles"], b["price"], b.get("rsi")) if asset != "BTC" and b.get("candles") else i
-    d = strategy.evaluate(asset, i, btc, pos_of(bot, asset), AGENT_WEIGHTS.get(bot["user_id"]))
+    d = strategy.evaluate(asset, i, btc, {**pos_of(bot, asset), "fee_pct": fee_round_trip_pct(bot)}, AGENT_WEIGHTS.get(bot["user_id"]))
     d["confidence"] = round(0.5 + d["score"] / 200, 2)
     d["metrics"] = {k: (round(v, 4) if isinstance(v, float) else v) for k, v in d["metrics"].items()}
     return d
@@ -179,13 +195,14 @@ def signal(bot: dict, asset: str = "BTC") -> dict:
     pos = pos_of(bot, asset)
     flat = pos["position_qty"] <= 0
     tag = f"SMA{nf}/{ns}"
-    tp, sl = float(bot.get("take_profit_pct") or 0), float(bot.get("stop_loss_pct") or 0)
+    tp, sl = net_tp_pct(bot), float(bot.get("stop_loss_pct") or 0)
+    tp_txt = f"+{bot.get('take_profit_pct')}% +{fee_round_trip_pct(bot):.2f}% fees = +{tp}% net"
     if not flat and pos["entry_price"]:
         move = (price - pos["entry_price"]) / pos["entry_price"] * 100
         if tp and move >= tp - 1e-9 and not pos["tp_taken"]:
             if bot.get("partial_tp", True):
-                return {"action": "SELL", "partial": True, "confidence": 0.95, "reason": f"[{asset}] PARTIAL TAKE PROFIT {move:+.2f}% (target +{tp}%) · selling half, rest rides trailing stop · RSI {r}"}
-            return {"action": "SELL", "confidence": 0.95, "reason": f"[{asset}] TAKE PROFIT hit {move:+.2f}% (target +{tp}%) · RSI {r}"}
+                return {"action": "SELL", "partial": True, "confidence": 0.95, "reason": f"[{asset}] PARTIAL TAKE PROFIT {move:+.2f}% (target {tp_txt}) · selling half, rest rides trailing stop · RSI {r}"}
+            return {"action": "SELL", "confidence": 0.95, "reason": f"[{asset}] TAKE PROFIT hit {move:+.2f}% (target {tp_txt}) · RSI {r}"}
         peak = max(float(pos["peak_price"] or 0), pos["entry_price"])
         if sl and bot.get("trailing_stop", True) and peak > pos["entry_price"]:
             drop = (price - peak) / peak * 100
@@ -244,13 +261,13 @@ async def record_fill(bot: dict, side: str, price: float, qty: float, fill: str,
         if bot["mode"] != "live":
             upd["cash"] = bot["cash"] - qty * price
     elif d.get("partial") or d.get("fraction"):
-        pnl = round((price - pos["entry_price"]) * qty, 4)
+        pnl = net_pnl(bot, pos["entry_price"], price, qty) if bot["mode"] == "live" else round((price - pos["entry_price"]) * qty, 4)
         upd.update(pos_fields(asset, qty=round(max(pos["position_qty"] - qty, 0), 8), tp_taken=True,
                               tiers=d.get("tier", pos["tiers_done"]), stop=d.get("stop")), realized_pnl=round(bot["realized_pnl"] + pnl, 4))
         if bot["mode"] != "live":
             upd["cash"] = bot["cash"] + qty * price
     else:
-        pnl = round((price - pos["entry_price"]) * qty, 4)
+        pnl = net_pnl(bot, pos["entry_price"], price, qty) if bot["mode"] == "live" else round((price - pos["entry_price"]) * qty, 4)
         upd.update(pos_fields(asset, qty=0.0, entry=0.0, peak=0.0, tp_taken=False, stop=0.0, tiers=0, atr=0.0), realized_pnl=round(bot["realized_pnl"] + pnl, 4),
                    wins=bot["wins"] + (pnl > 0), losses=bot["losses"] + (pnl <= 0))
         if bot["mode"] != "live":
@@ -330,6 +347,10 @@ async def execute(bot: dict, d: dict, asset: str = "BTC"):
     ex = client_from_doc(creds)
     try:
         symbol = await resolve_symbol(ex, creds["exchange"], asset)
+        taker = (ex.market(symbol) or {}).get("taker")
+        if taker and abs(float(taker) - float(bot.get("fee_rate") or 0)) > 1e-9:
+            await set_bot(uid, fee_rate=float(taker))
+            bot = {**bot, "fee_rate": float(taker)}
         quote = symbol.split("/")[1]
         if side == "BUY":
             if bot.get("auto_fund", True) and (float(bot.get("size_pct") or 0) > 0 or d.get("risk")):
@@ -441,7 +462,7 @@ def protective_stop(bot: dict, asset: str, pos: dict, entry: float, d: dict = No
 
 
 def tp_price(bot: dict, pos: dict, entry: float) -> float:
-    tp = float(bot.get("take_profit_pct") or 0)
+    tp = net_tp_pct(bot)
     return entry * (1 + tp / 100) if tp and entry and not pos.get("tp_taken") else 0.0
 
 

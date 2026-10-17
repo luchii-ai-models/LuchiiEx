@@ -67,7 +67,7 @@ class TestSignal:
         assert d["action"] == "SELL" and "STOP LOSS" in d["reason"], d
 
     def test_d_partial_tp(self, falling):
-        d = engine.signal(bot(entry_price=falling / 1.016, tp_taken=False, partial_tp=True))
+        d = engine.signal(bot(entry_price=falling / 1.018, tp_taken=False, partial_tp=True))  # 1.5% + 0.22% fees
         assert d["action"] == "SELL" and d.get("partial") and "PARTIAL TAKE PROFIT" in d["reason"], d
 
     def test_e_trailing_stop(self, falling):
