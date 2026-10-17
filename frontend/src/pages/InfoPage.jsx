@@ -1,4 +1,4 @@
-import { useParams, useNavigate, Navigate } from "react-router-dom";
+import { useParams, useNavigate, Navigate, Link } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import Logo from "../components/terminal/Logo";
 import Footer from "../components/terminal/Footer";
@@ -130,6 +130,16 @@ export default function InfoPage() {
       </header>
 
       <main className="flex-1 overflow-y-auto px-6 py-10">
+        <nav data-testid="info-tabs" className="flex flex-wrap justify-center gap-x-4 gap-y-2 mb-8 max-w-3xl mx-auto">
+          {Object.entries(CONTENT).map(([s, c]) => (
+            <Link key={s} to={`/info/${s}`} data-testid={`info-tab-${s}`}
+              className={`text-[10px] tracking-[0.15em] uppercase px-2 py-1 border transition-colors ${s === slug ? "border-neon-magenta text-neon-magenta" : "border-transparent text-term-muted hover:text-white"}`}>
+              {c.title}
+            </Link>
+          ))}
+          <Link to="/help" data-testid="info-tab-help" className="text-[10px] tracking-[0.15em] uppercase px-2 py-1 border border-transparent text-term-muted hover:text-white">Help center</Link>
+          <Link to="/company" data-testid="info-tab-company" className="text-[10px] tracking-[0.15em] uppercase px-2 py-1 border border-transparent text-term-muted hover:text-white">About the company</Link>
+        </nav>
         <div className="w-full max-w-2xl mx-auto" data-testid={`info-${slug}`}>
           <div className="flex items-center gap-3 mb-6">
             <Logo size={44} />

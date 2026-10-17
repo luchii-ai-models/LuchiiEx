@@ -6,6 +6,7 @@ import { Toaster } from "sonner";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { ThemeProvider, useTheme } from "./context/ThemeContext";
 import Login from "./pages/Login";
+import Logo from "./components/terminal/Logo";
 import Dashboard from "./pages/Dashboard";
 import Company from "./pages/Company";
 import HelpCenter from "./pages/HelpCenter";
@@ -29,9 +30,10 @@ function Protected({ children }) {
   const { user, checking } = useAuth();
   if (checking)
     return (
-      <div className="h-screen w-screen bg-black flex items-center justify-center">
-        <span className="text-neon-magenta text-glow-magenta text-sm tracking-[0.3em] animate-pulse">
-          BOOTING LUCHII ENGINE<span className="animate-blink">_</span>
+      <div className="h-screen w-screen bg-black flex flex-col items-center justify-center gap-4" data-testid="boot-screen">
+        <Logo size={96} className="animate-spin-slow" />
+        <span className="text-neon-magenta text-glow-magenta text-[10px] tracking-[0.3em] animate-pulse">
+          LUCHII EX<span className="animate-blink">_</span>
         </span>
       </div>
     );

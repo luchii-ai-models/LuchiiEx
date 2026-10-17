@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { X, Link2, AlertTriangle, Unplug, Bell, Shield, Wallet, Sliders, Send, Server, Radio, Coins } from "lucide-react";
+import { X, Link2, AlertTriangle, Unplug, Bell, Shield, Wallet, Sliders, Send, Server, Radio, Coins, MessageSquare, HelpCircle } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import api, { formatApiErrorDetail } from "../../lib/api";
 import WalletConnect from "./WalletConnect";
 import SolanaTab from "./SolanaTab";
@@ -19,6 +20,7 @@ const TABS = [
 
 export default function SettingsModal({ bot, onClose, refresh, initialTab = "config" }) {
   const [tab, setTab] = useState(initialTab);
+  const navigate = useNavigate();
   const [preset, setPreset] = useState(null);
   const connected = bot?.exchange_connected;
   const goExchange = (id) => { setPreset(id); setTab("exchange"); };
@@ -31,13 +33,17 @@ export default function SettingsModal({ bot, onClose, refresh, initialTab = "con
           <button data-testid="close-settings-button" onClick={onClose} className="text-term-muted hover:text-neon-red"><X size={16} /></button>
         </div>
 
-        <div className="px-3 py-2 border-b border-term-border">
+        <div className="px-3 py-2 border-b border-term-border flex items-center gap-2">
           <select data-testid="settings-tab-select" value={tab} onChange={(e) => setTab(e.target.value)}
-            className="w-full bg-term-surface border border-term-border text-neon-magenta text-xs tracking-[0.15em] px-3 py-2 outline-none focus:border-neon-magenta">
+            className="flex-1 bg-term-surface border border-term-border text-neon-magenta text-xs tracking-[0.15em] px-3 py-2 outline-none focus:border-neon-magenta">
             {TABS.map(([id, label]) => (
               <option key={id} value={id} className="bg-term-surface text-white">{label}</option>
             ))}
           </select>
+          <button data-testid="open-chat-button" onClick={() => navigate("/chat")} title="Luchii chat"
+            className="text-term-muted hover:text-neon-magenta transition-colors"><MessageSquare size={16} /></button>
+          <button data-testid="open-help-button" onClick={() => navigate("/help")} title="Help center"
+            className="text-term-muted hover:text-neon-cyan transition-colors"><HelpCircle size={16} /></button>
         </div>
 
         <div className="p-4 overflow-y-auto">
@@ -78,6 +84,7 @@ function ConfigTab({ bot, refresh, connected }) {
   const [volF, setVolF] = useState(bot?.volume_filter ?? true);
   const [trail, setTrail] = useState(bot?.trailing_stop ?? true);
   const [partial, setPartial] = useState(bot?.partial_tp ?? true);
+  const [maker, setMaker] = useState(bot?.maker_entries ?? true);
   const [aggr, setAggr] = useState(bot?.aggressive ?? true);
   const [sizePct, setSizePct] = useState(bot?.size_pct ?? 50);
   const [assets, setAssets] = useState(bot?.assets ?? ["BTC", "ETH", "SOL"]);
@@ -87,7 +94,7 @@ function ConfigTab({ bot, refresh, connected }) {
 
   const save = async () => {
     try {
-      await api.post("/bot/config", { position_usd: Number(posUsd), auto_fund: autoFund, take_profit_pct: Number(tp), stop_loss_pct: Number(sl), trend_filter: trendF, volume_filter: volF, trailing_stop: trail, partial_tp: partial, aggressive: aggr, size_pct: Number(sizePct), assets, strategy: strat });
+      await api.post("/bot/config", { position_usd: Number(posUsd), auto_fund: autoFund, take_profit_pct: Number(tp), stop_loss_pct: Number(sl), trend_filter: trendF, volume_filter: volF, trailing_stop: trail, partial_tp: partial, maker_entries: maker, aggressive: aggr, size_pct: Number(sizePct), assets, strategy: strat });
       toast.success("Config saved"); refresh();
     } catch (e) { toast.error(formatApiErrorDetail(e.response?.data?.detail)); }
   };
@@ -139,6 +146,7 @@ function ConfigTab({ bot, refresh, connected }) {
       <p className="text-[9px] text-term-muted -mt-3">The bot checks the market every 5 seconds and exits the position as soon as either target is hit. 0 disables a target.</p>
       <Toggle on={trail} onClick={() => setTrail(!trail)} testId="trailing-stop-toggle" labelOn="TRAILING STOP ON · STOP FOLLOWS THE PEAK PRICE" labelOff="TRAILING STOP OFF · FIXED STOP FROM ENTRY" />
       <Toggle on={partial} onClick={() => setPartial(!partial)} testId="partial-tp-toggle" labelOn="PARTIAL TAKE PROFIT ON · SELL HALF AT TARGET, REST RIDES" labelOff="PARTIAL TAKE PROFIT OFF · SELL ALL AT TARGET" />
+      <Toggle on={maker} onClick={() => setMaker(!maker)} testId="maker-entries-toggle" labelOn="MAKER ENTRIES ON · POST-ONLY LIMIT AT BID (LOWER FEE), MARKET FALLBACK AFTER 20S" labelOff="MAKER ENTRIES OFF · MARKET BUY (TAKER FEE)" />
       <p className="text-[9px] text-term-muted -mt-3">With trailing on, the stop-loss % is measured from the highest price since entry, so gains get locked in as the price rises.</p>
       <div>
         <Label>ENTRY FILTERS{aggr ? " · RELAXED BY AGGRESSIVE MODE" : ""}</Label>

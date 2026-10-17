@@ -204,6 +204,12 @@ def signal(bot: dict, asset: str = "BTC") -> dict:
                 return {"action": "SELL", "partial": True, "confidence": 0.95, "reason": f"[{asset}] PARTIAL TAKE PROFIT {move:+.2f}% (target {tp_txt}) · selling half, rest rides trailing stop · RSI {r}"}
             return {"action": "SELL", "confidence": 0.95, "reason": f"[{asset}] TAKE PROFIT hit {move:+.2f}% (target {tp_txt}) · RSI {r}"}
         peak = max(float(pos["peak_price"] or 0), pos["entry_price"])
+        fee_rt = fee_round_trip_pct(bot)
+        peak_move = (peak - pos["entry_price"]) / pos["entry_price"] * 100
+        if sl and bot.get("trailing_stop", True) and peak_move >= fee_rt + 0.1:
+            floor = pos["entry_price"] * (1 + fee_rt / 100)
+            if price <= floor:
+                return {"action": "SELL", "confidence": 0.95, "reason": f"[{asset}] BREAK-EVEN+FEES lock hit (peak {peak_move:+.2f}% → exit {move:+.2f}% gross ≈ 0 net) · never give a winner back · RSI {r}"}
         if sl and bot.get("trailing_stop", True) and peak > pos["entry_price"]:
             drop = (price - peak) / peak * 100
             if drop <= -sl:
@@ -376,9 +382,11 @@ async def execute(bot: dict, d: dict, asset: str = "BTC"):
                 return await wait_log(uid, bot, f"[{asset}] BUY signal skipped · need {usd} {quote} in trading, have {round(have, 4)}. Deposit {quote}/USDC.")
             if usd / price < min_qty or usd < min_cost:
                 return await wait_log(uid, bot, f"[{asset}] BUY signal skipped · ${usd} is below the {symbol} minimum (≈ ${round(max(min_qty * price, min_cost), 2)}). Raise POSITION SIZE / % or deposit more.")
-            o = await market_order(ex, symbol, "BUY", usd, 0, price)
+            o = await market_order(ex, symbol, "BUY", usd, 0, price, maker=bot.get("maker_entries", True))
             qty = float(o.get("filled") or 0) or usd / price
             fill_px = float(o.get("average") or price)
+            if o.get("maker"):
+                d = {**d, "reason": d["reason"] + " · MAKER entry (post-only limit, lower fee)"}
             await arm_stop(ex, creds["exchange"], uid, asset, symbol, qty, protective_stop(bot, asset, pos, fill_px, d), fill_px,
                            tp_price(bot, {"tp_taken": False}, fill_px), bot.get("partial_tp", True))
         else:
@@ -458,6 +466,9 @@ def protective_stop(bot: dict, asset: str, pos: dict, entry: float, d: dict = No
         peak = max(float(pos.get("peak_price") or 0), entry)
         if bot.get("trailing_stop", True) and peak > entry:
             cands.append(peak * (1 - sl / 100))
+            fee_rt = fee_round_trip_pct(bot)
+            if (peak - entry) / entry * 100 >= fee_rt + 0.1:
+                cands.append(entry * (1 + fee_rt / 100))
     return max(cands)
 
 

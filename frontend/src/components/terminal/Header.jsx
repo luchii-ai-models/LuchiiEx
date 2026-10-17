@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { Settings, LogOut, Activity, Download, Sun, Moon, HelpCircle, MessageSquare } from "lucide-react";
+import { Settings, LogOut, Activity, Download, Sun, Moon } from "lucide-react";
 import { toast } from "sonner";
 import { useInstallPrompt } from "../../hooks/useInstallPrompt";
 import { useTheme } from "../../context/ThemeContext";
@@ -19,7 +18,6 @@ export default function Header({ bot, snapshot, user, onSettings, onLogout }) {
   const [clock, setClock] = useState("");
   const { canInstall, installed, install, isIOS } = useInstallPrompt();
   const { theme, toggle } = useTheme();
-  const navigate = useNavigate();
 
   useEffect(() => {
     const t = setInterval(() => setClock(new Date().toLocaleTimeString("en-GB")), 1000);
@@ -69,10 +67,6 @@ export default function Header({ bot, snapshot, user, onSettings, onLogout }) {
           <button data-testid="install-app-button" onClick={handleInstall} title="Install app"
             className="text-neon-cyan hover:text-glow-cyan transition-colors"><Download size={16} /></button>
         )}
-        <button data-testid="open-chat-button" onClick={() => navigate("/chat")} title="Luchii chat"
-          className="text-term-muted hover:text-neon-magenta transition-colors"><MessageSquare size={16} /></button>
-        <button data-testid="open-help-button" onClick={() => navigate("/help")} title="Help center"
-          className="text-term-muted hover:text-neon-cyan transition-colors"><HelpCircle size={16} /></button>
         <button data-testid="open-settings-button" onClick={onSettings}
           className="text-term-muted hover:text-neon-magenta transition-colors"><Settings size={16} /></button>
         <button data-testid="logout-button" onClick={onLogout}

@@ -46,3 +46,16 @@ def test_luchii_tier_includes_fee():
     assert strategy.evaluate("ETH", i, i, {**pos, "fee_pct": 0.22})["action"] == "HOLD"  # needs +1.22%
     i2 = {**i, "price": 2400 * 1.0125}
     assert strategy.evaluate("ETH", i2, i2, {**pos, "fee_pct": 0.22})["action"] == "SELL"
+
+
+def test_break_even_fee_lock():
+    candles = [{"t": k, "o": 2400, "h": 2400, "l": 2400, "c": 2400.0, "v": 1} for k in range(40)]
+    bot = {**engine.DEFAULT_BOT, "user_id": "u", "strategy": "aggressive", "take_profit_pct": 0.6, "stop_loss_pct": 0.4, "fee_rate": 0.001,
+           "alt_positions": {"ETH": {"qty": 0.01, "entry": 2400.0, "peak": 2400 * 1.004, "tp_taken": False}}}
+    engine.SNAPSHOT["markets"] = {"ETH": {"price": 2400 * 1.0021, "candles": candles, "rsi": 50}}
+    d = engine.signal(bot, "ETH")
+    assert d["action"] == "SELL" and "BREAK-EVEN+FEES" in d["reason"]
+    engine.SNAPSHOT["markets"]["ETH"]["price"] = 2400 * 1.003
+    assert engine.signal(bot, "ETH")["action"] == "HOLD"
+    pos = {"stop_price": 0.0, "peak_price": 2400 * 1.004}
+    assert abs(engine.protective_stop(bot, "ETH", pos, 2400.0) - 2400 * 1.0022) < 1e-6

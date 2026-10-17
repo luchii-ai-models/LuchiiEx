@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { formatApiErrorDetail } from "../lib/api";
-import { Terminal, Zap } from "lucide-react";
+import { Terminal, Zap, Eye, EyeOff } from "lucide-react";
 import Footer from "../components/terminal/Footer";
 import Logo from "../components/terminal/Logo";
 
@@ -85,18 +85,26 @@ export default function Login() {
 }
 
 function Field({ label, value, onChange, type = "text", placeholder, required, testid }) {
+  const [show, setShow] = useState(false);
+  const isPw = type === "password";
   return (
-    <label className="block">
+    <label className="block relative">
       <span className="panel-label">{label}</span>
       <input
         data-testid={testid}
-        type={type}
+        type={isPw && show ? "text" : type}
         value={value}
         required={required}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
-        className="mt-2 w-full bg-transparent border-b border-neon-magenta/60 focus:border-neon-magenta outline-none py-2 text-white text-sm placeholder:text-term-muted/40"
+        className={`mt-2 w-full bg-transparent border-b border-neon-magenta/60 focus:border-neon-magenta outline-none py-2 text-white text-sm placeholder:text-term-muted/40 ${isPw ? "pr-8" : ""}`}
       />
+      {isPw && (
+        <button type="button" data-testid={`${testid}-toggle-visibility`} onClick={() => setShow(!show)} title={show ? "Hide password" : "Show password"}
+          className="absolute right-0 bottom-2 text-white/80 hover:text-white transition-colors">
+          {show ? <EyeOff size={16} /> : <Eye size={16} />}
+        </button>
+      )}
     </label>
   );
 }

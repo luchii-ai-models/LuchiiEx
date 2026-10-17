@@ -165,9 +165,13 @@ def equity_usd(bal: dict, price: float) -> float:
     return round(usd + sum(float(t.get(a) or 0) * p for a, p in px.items()), 2)
 
 
-async def market_order(ex, symbol: str, side: str, usd: float, qty: float, price: float) -> dict:
+async def market_order(ex, symbol: str, side: str, usd: float, qty: float, price: float, maker: bool = False, wait_s: float = 20.0) -> dict:
     if side == "BUY":
         amount = float(ex.amount_to_precision(symbol, usd / price))
+        if maker:
+            o = await maker_buy(ex, symbol, amount, price, wait_s)
+            if o is not None:
+                return o
         o = await ex.create_order(symbol, "market", "buy", amount, price)
     else:
         amount = float(ex.amount_to_precision(symbol, qty))
@@ -179,6 +183,36 @@ async def market_order(ex, symbol: str, side: str, usd: float, qty: float, price
         except Exception:
             pass
     return o
+
+
+async def maker_buy(ex, symbol: str, amount: float, price: float, wait_s: float):
+    """Post-only limit at best bid (pays maker fee). Returns the filled order, or None after cancelling if not filled in wait_s."""
+    try:
+        ob = await ex.fetch_order_book(symbol, 5)
+        bid = float(ob["bids"][0][0]) if ob.get("bids") else price
+        px = float(ex.price_to_precision(symbol, bid))
+        o = await ex.create_order(symbol, "limit", "buy", amount, px, {"postOnly": True})
+    except Exception:
+        return None
+    deadline = asyncio.get_event_loop().time() + wait_s
+    while asyncio.get_event_loop().time() < deadline:
+        await asyncio.sleep(2)
+        try:
+            cur = await ex.fetch_order(o["id"], symbol)
+        except Exception:
+            continue
+        if (cur.get("status") or "").lower() == "closed" or (cur.get("filled") or 0) >= amount * 0.999:
+            return {**cur, "maker": True}
+        if (cur.get("status") or "").lower() in ("canceled", "rejected", "expired"):
+            return None
+    try:
+        await ex.cancel_order(o["id"], symbol)
+        cur = await ex.fetch_order(o["id"], symbol)
+        if (cur.get("filled") or 0) > 0:
+            return {**cur, "maker": True, "partial_maker": True}
+    except Exception:
+        pass
+    return None
 
 
 async def place_stop(ex, exchange: str, symbol: str, qty: float, stop_price: float) -> dict:

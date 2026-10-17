@@ -124,6 +124,7 @@ class ConfigIn(BaseModel):
     volume_filter: Optional[bool] = None
     trailing_stop: Optional[bool] = None
     partial_tp: Optional[bool] = None
+    maker_entries: Optional[bool] = None
     aggressive: Optional[bool] = None
     size_pct: Optional[float] = Field(None, ge=0, le=100)
     assets: Optional[list[Literal["BTC", "ETH", "SOL"]]] = Field(None, min_length=1)
@@ -326,6 +327,12 @@ async def bot_reset(user=Depends(current_user)):
 @api.get("/bot/logs")
 async def bot_logs(user=Depends(current_user)):
     return await db.bot_logs.find({"user_id": user["id"]}, {"_id": 0, "user_id": 0}).sort("ts", -1).to_list(60)
+
+
+@api.get("/bot/logs/day")
+async def bot_logs_day(user=Depends(current_user)):
+    since = now_ms() - 24 * 3600 * 1000
+    return await db.bot_logs.find({"user_id": user["id"], "ts": {"$gte": since}}, {"_id": 0, "user_id": 0}).sort("ts", -1).to_list(3000)
 
 
 @api.get("/bot/trades")
