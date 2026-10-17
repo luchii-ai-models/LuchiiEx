@@ -1,0 +1,33 @@
+{
+  "summary": "Frontend-only test of collapsible dashboard cards, chart full-screen pop-out, full-screen execution log via portal, and the oversold dip-entry toggle. All requested flows pass on desktop 1920x800/1080 and mobile 390x844. Collapsibles: all 4 toggles hide and show their body, aria-expanded updates, localStorage luchii.card.<id> = '0'/'1', and the collapsed state survives a reload. Chart: chart-fullscreen-open sits right after zoom-reset, before the STANDBY badge. Full screen bbox is {0,0,1920,800} on desktop and {0,0,390,844} on mobile, the parent is BODY (portal), and the element at the centre point is inside the overlay. Zoom-in/out work inside full screen (rect count 51 -> 81), and close works. Full log: bbox {0,0,1920,800} and {0,0,390,844}, parent BODY, and full-log-close works. Dip toggle: hidden for LUCHII_003 and visible for AGGRESSIVE SCALP. Its label switches ON <-> OFF. SAVE CONFIG persists it: GET /api/bot/state returned dip_entries False, then True. The engine reads bot.dip_entries at engine.py:222. Admin was restored to strategy luchii003, and status stayed 'stopped' throughout. Mobile: scrollWidth 390, no horizontal overflow. No console errors on dashboard load.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard right column (Collapsible)", "issues": ["The header shows a static '▾' glyph and also a rotating ChevronDown, so there are two arrows and the '▾' never changes.", "When expanded, the title repeats: the collapsible header says e.g. 'STRATEGY HEALTH · 30D' and the card's own header says the same thing directly below it.", "On mobile the toggle bar is 23.5px tall, which is below the ~44px recommended tap target."]},
+      {"screen": "Chart full screen (mobile 390)", "issues": ["The 'BTC/USD · 1M' label wraps onto 3 lines and the price sits right against the zoom buttons. Consider hiding the pair label or stacking the header on small screens."]},
+      {"screen": "Full-screen chart / log", "issues": ["The Escape key does not close either overlay (no keydown handler found)."]},
+      {"screen": "SettingsModal Config (aggressive)", "issues": ["The dip-entries toggle sits between PARTIAL TP and the trailing-stop help text, so 'With trailing on, the stop-loss % is measured...' is two toggles away from the trailing toggle it describes."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Optional: drop the static '▾' in the Collapsible title (keep the chevron), and remove the duplicate inner card title or hide it when it is wrapped.",
+    "Optional: add Escape-to-close for chart-fullscreen and full-log-modal.",
+    "Optional: move the trailing-stop help text right under trailing-stop-toggle.",
+    "Optional: make the collapsible toggles taller on mobile (py-2), and tidy the mobile full-screen chart header."
+  ],
+  "critical_code_review_comments": [
+    "Collapsible reads localStorage inside the useState initialiser without a try/catch. It throws in privacy modes where storage is blocked. Low risk.",
+    "The chart full screen renders a second CandleChart instance. Zoom state is not shared with the inline chart, so the zoom resets when you open or close full screen. Acceptable, but worth noting."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (frontend only)", "frontend": "100% of requested flows pass; minor design nits only"},
+  "seed_data_creation": "None. Admin bot config was saved 3 times via the UI (aggressive dip OFF, then ON, then strategy luchii003). As a result, maker_entries=true and dip_entries=true are now stored explicitly; before they were unset, and the defaults are also true. The bot was never started, status=stopped, mode=live unchanged. localStorage luchii.card.* left at '1' (expanded).",
+  "test_credentials": "admin@gravia.io / Gravia@2026 (from /app/memory/test_credentials.md)",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Collapsible ids: trader/signal/strategy/validation. Chart full screen and full log are portals into body (z-200). dip-entries-toggle only renders when strategy=aggressive. Always restore strategy luchii003 after saving config, and never call /bot/start for the admin (mode=live).",
+  "rca of the issue": "No functional bugs found."
+}
