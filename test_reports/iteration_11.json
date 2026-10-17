@@ -1,0 +1,43 @@
+{
+  "summary": "Iteration 11 tested strategy gates, entry_guard, the /strategy/gate and /strategy/stats APIs, the luchii_backtest package and StrategyHealthCard. Backend: the new tests/test_iteration11_gates.py has 24 tests and all pass. They cover classify (all 7 spec cases), next_state hysteresis (3 fails to restrict; 7 passes with PF>1.35, DD<8 and 100+ trades to reopen; DISABLED stays sticky), profit_factor and max_drawdown_pct, and the 5 risk_multiplier cases. entry_guard was tested with patched SNAPSHOT candles: None when all filters pass; RSI, ADX, volume, score and confidence messages; for ETH, 'BTC below EMA200', 'BTC RSI' and 'BTC trend negative'. decide() turns a filtered BUY into HOLD 'entry filtered' for both strategies. The DB-level kill switch returns '3 consecutive losses', 'daily loss 4.0% > 3%' and 'weekly drawdown 10.0% > 8%', and None when clean. The API gate state machine was checked with 60 luchii003 SELL trades at PF 0.9. Every call returned raw=RESTRICTED. The state went WARNING, WARNING, then RESTRICTED on the 3rd call and stayed RESTRICTED on the 4th. audit_log has 2 strategy_gate_changed events (OPEN→WARNING, WARNING→RESTRICTED). /stats shows by_strategy.luchii003.trades=60, BTC/ETH/SOL keys, win_rate 50.0 and avg_gain 0.9. Both endpoints return 401/403 without auth. test_luchii_backtest.py passes (22 tests). A new test_iteration11_backtest_extra.py passes (3 tests): run_backtest keys present and equity never negative, walk_forward windows have stability and overfit, Monte Carlo is reproducible with a seed, and deployment_gate([]) fails. The live run 'python -m luchii_backtest.run BTC 600' finished in under 90s with no rate limit; with 600 bars there are no walk-forward windows, so the gate fails. Regression it6–it10 passes: 128/128 combined, -n 0. Frontend (admin, 1920 and 390): strategy-health-card sits below signal-score-card and shows GATE OPEN, PF/WIN/DD, the 'not enough trades' reason and the stats-BTC/ETH/SOL rows. The right column is overflow-y:auto and scrolls (scrollTop 430). It ends at 1020px, above the footer at 1028px, so the iteration-10 overflow is fixed. Mobile scrollWidth is 390. The footer text is exact. There were no page errors.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "engine.tick_bot / gates.kill_switch", "issue": "The '3 consecutive losses' kill switch is permanent. It reads the last 3 SELL trades with no time window. Once triggered, it blocks every new BUY, so no new SELL can ever reset it. It is active right now for the live user 6ad0c885… (bot running, last 3 SELL pnl -0.0076/-0.016/-0.0017): that bot can no longer open trades and will stay that way until someone steps in. Fix: limit the check to a time window (for example the last 24h), or add a cooldown or expiry (for example, pause N hours after the 3rd loss), or a manual reset.", "priority": "CRITICAL"},
+      {"endpoint": "engine.tick_bot manual_confirm branch", "issue": "When manual_confirm is True, a BUY becomes a pending order without passing gates.allows_entry, kill_switch, the SOL-longs rule or risk_multiplier. The gates only run in the auto-execute branch, so a confirmed manual BUY skips all of them.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "gates.rolling / kill_switch", "issue": "bot_pnl stores equity 0.0 whenever live_equity is None (the live user has 128 such docs in 7d). Today they come before the first positive value, so they do no harm. If live_equity fetching fails mid-run, a 0 after a positive peak gives a 100% drawdown, which disables the gate and trips the weekly-DD kill switch. Skip equity<=0 points when computing DD, or skip the insert."},
+      {"endpoint": "luchii_backtest.run_backtest", "issue": "Trade pnl leaves out the entry fee (it is only taken from cash), so net_profit and PF look better than reality. In the live run, trade net was -30.74 while the equity change was -40.74. The line `frac = d.get('fraction') or 1.0 if why=='tp' else 1.0` has an operator-precedence bug: a stop fill sells only a fraction when d carries one."},
+      {"endpoint": "luchii_backtest/run.py", "issue": "The Monte Carlo input is bar-to-bar equity changes (mark-to-market), not per-trade PnLs. The default 3000 bars with train 2000 / test 500 / step 500 gives only 2 windows."},
+      {"endpoint": "engine.entry_guard", "issue": "Info: for BTC itself there is no direction check (ADX measures strength only). A strong BTC downtrend with RSI 40 passes the guard. This relies on luchii_signal's own trend checks."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "StrategyHealthCard", "issues": ["With 0 trades, PF shows '0.00' and the reason reads 'PF 0.0'. Show '—' when there are no trades so it is not read as a losing strategy.", "The text is very small (9px), which hurts readability; consider 10–11px."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iteration11_gates.py", "/app/backend/tests/test_iteration11_backtest_extra.py", "/app/backend/tests/test_luchii_backtest.py", "/app/test_reports/pytest/pytest_iteration11.xml"],
+  "action_items": [
+    "CRITICAL: make the '3 consecutive losses' kill switch expire (time window or cooldown); it currently blocks the live user's bot from all new entries for good.",
+    "Apply allows_entry, kill_switch, the SOL rule and risk_multiplier in the manual_confirm BUY path too (or at confirm time).",
+    "Ignore equity<=0 bot_pnl points in drawdown calculations, or don't insert them.",
+    "Backtest: include the entry fee in trade pnl; fix the frac precedence; feed per-trade PnLs to Monte Carlo in run.py.",
+    "UI: show '—' for PF when there are 0 trades."
+  ],
+  "critical_code_review_comments": [
+    "gates.kill_switch: the consecutive-loss rule has no recovery path, so it locks itself in.",
+    "tick_bot line ~414: the manual_confirm branch skips the gate block (lines 422-438).",
+    "gates.evaluate uses overall account DD (all strategies) for each strategy's gate; that is acceptable, but document it.",
+    "allows_entry caches the gate for 60s, but hysteresis streaks advance on every evaluate call, including UI polling of GET /strategy/gate every 30s. Gate transitions therefore depend on how often the dashboard is open. Consider moving the streak forward once per closed trade or once per day."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration11_gates.py", "/app/backend/tests/test_iteration11_backtest_extra.py"],
+  "success_rate": {"backend": "100% of tests (155/155); 2 logic issues from code review", "frontend": "100%"},
+  "seed_data_creation": "None kept. Temporary test_it11_* user and TEST_ks_* docs were deleted (verified 0 left).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: cd /app/backend && set -a && . ./.env && . ../frontend/.env && set +a && python -m pytest tests/test_iteration11_gates.py tests/test_iteration11_backtest_extra.py tests/test_luchii_backtest.py tests/test_iteration6_solana_risk.py tests/test_iteration7_token_tpsl.py tests/test_iteration8_exit_rules.py tests/test_iteration9_boost.py tests/test_iteration10_luchii003.py -n 0. Gate API test uses PF 0.9 (30 wins of +0.9, 30 losses of -1) to get raw RESTRICTED. The review request's example (20×+1, 40×-2) gives PF 0.25, which is DISABLED, not RESTRICTED. Never touch user 6ad0c885f4fa421663189000 (read-only queries only).",
+  "rca of the issue": "Kill-switch deadlock: kill_switch() sorts all SELL trades by ts desc and takes 3. With no ts filter, the result only changes when a new SELL happens. tick_bot runs kill_switch before every BUY and skips the BUY when it fires, so no new position opens, no new SELL happens, and the condition stays true forever. Reproduced read-only: gates.kill_switch('6ad0c885…') returns '3 consecutive losses' while that bot status is 'running'. Mitigation: only count sells within a recent window (for example ts >= now-24h), or add an expiry time to the pause."
+}

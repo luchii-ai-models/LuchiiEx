@@ -38,7 +38,7 @@ def trade_stats(trades: list) -> dict:
 async def rolling(uid: str) -> dict:
     since = now_ms() - WINDOW_MS
     trades = [t async for t in db.bot_trades.find({"user_id": uid, "ts": {"$gte": since}}, {"_id": 0})]
-    eq = [p["equity"] async for p in db.bot_pnl.find({"user_id": uid, "ts": {"$gte": since}}, {"_id": 0, "equity": 1}).sort("ts", 1)]
+    eq = [p["equity"] async for p in db.bot_pnl.find({"user_id": uid, "ts": {"$gte": since}, "equity": {"$gt": 0}}, {"_id": 0, "equity": 1}).sort("ts", 1)]
     by_asset = {}
     for a in sorted({t.get("asset", "BTC") for t in trades} | {"BTC", "ETH", "SOL"}):
         by_asset[a] = trade_stats([t for t in trades if t.get("asset", "BTC") == a])
@@ -98,13 +98,13 @@ async def evaluate(uid: str, strategy: str) -> dict:
 async def kill_switch(uid: str):
     """3 consecutive losses, daily loss > 3% or weekly drawdown > 8% pauses new entries."""
     now = now_ms()
-    sells = [t async for t in db.bot_trades.find({"user_id": uid, "side": "SELL"}, {"_id": 0, "pnl": 1, "ts": 1}).sort("ts", -1).limit(3)]
-    if len(sells) == 3 and all(float(t.get("pnl") or 0) <= 0 for t in sells):
-        return "3 consecutive losses"
-    day = [p["equity"] async for p in db.bot_pnl.find({"user_id": uid, "ts": {"$gte": now - 86400_000}}, {"_id": 0, "equity": 1}).sort("ts", 1)]
-    if len(day) > 1 and day[0] > 0 and (day[0] - day[-1]) / day[0] * 100 > 3:
+    sells = [t async for t in db.bot_trades.find({"user_id": uid, "side": "SELL", "ts": {"$gte": now - 86400_000}}, {"_id": 0, "pnl": 1, "ts": 1}).sort("ts", -1).limit(3)]
+    if len(sells) == 3 and all(float(t.get("pnl") or 0) <= 0 for t in sells) and now - sells[0]["ts"] < 4 * 3600_000:
+        return f"3 consecutive losses · entries paused {round((4 * 3600_000 - (now - sells[0]['ts'])) / 60000)} min"
+    day = [p["equity"] async for p in db.bot_pnl.find({"user_id": uid, "ts": {"$gte": now - 86400_000}, "equity": {"$gt": 0}}, {"_id": 0, "equity": 1}).sort("ts", 1)]
+    if len(day) > 1 and (day[0] - day[-1]) / day[0] * 100 > 3:
         return f"daily loss {(day[0] - day[-1]) / day[0] * 100:.1f}% > 3%"
-    week = [p["equity"] async for p in db.bot_pnl.find({"user_id": uid, "ts": {"$gte": now - 7 * 86400_000}}, {"_id": 0, "equity": 1}).sort("ts", 1)]
+    week = [p["equity"] async for p in db.bot_pnl.find({"user_id": uid, "ts": {"$gte": now - 7 * 86400_000}, "equity": {"$gt": 0}}, {"_id": 0, "equity": 1}).sort("ts", 1)]
     if max_drawdown_pct(week) > 8:
         return f"weekly drawdown {max_drawdown_pct(week)}% > 8%"
     return None

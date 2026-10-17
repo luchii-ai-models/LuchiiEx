@@ -80,6 +80,8 @@ User choices: copy from trade-bridge-73; use the env values exactly; no Emergent
 - First real run (BTC, last 1500 bars): 2 trades, both losers, PF 0 — too little data for walk-forward (needs ≥2500 bars). No profitability claim is made.
 - Not built (org tooling, out of app scope): Jira CSV, Docker/Alembic, Maven/Java SDK, PagerDuty, CI yaml.
 
+- Testing-agent iteration_11 fixes: loss kill switch now windowed (last 24h) with a 4h cooldown instead of permanent; gates/kill switch/SOL rule also apply to manual-confirm BUYs; zero-equity pnl points skipped (and no longer inserted); backtest pnl includes entry fee, stop fills always close full position, Monte Carlo uses per-trade pnl; run.py defaults 6000 bars / train 1500 / test 500. Latest BTC run log: /app/memory/backtest_btc_latest.log.
+
 ## Known limits
 - Live order placement has not been tested with real keys
 - Some exchanges reject fake secrets with a decode error before the auth call; this is still shown as "Exchange verification failed: …"

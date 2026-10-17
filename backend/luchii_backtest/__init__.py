@@ -103,10 +103,11 @@ def run_backtest(candles: list, params: dict = None, cash: float = 10000.0, fee:
                 if fill is None and d["action"] == "SELL":
                     fill, why = nxt["o"], ("tp" if d.get("fraction") else "exit")
                 if fill is not None:
-                    frac = d.get("fraction") or 1.0 if why == "tp" else 1.0
+                    frac = (d.get("fraction") or 1.0) if why == "tp" else 1.0
                     qty = pos["position_qty"] * frac
                     fill *= (1 - slippage)
-                    pnl = (fill - pos["entry_price"]) * qty - fill * qty * fee
+                    entry_fee = pos["entry_price"] * qty * fee
+                    pnl = (fill - pos["entry_price"]) * qty - fill * qty * fee - entry_fee
                     cash += fill * qty - fill * qty * fee
                     trades.append(pnl)
                     regimes.append(i["regime"])
@@ -133,7 +134,7 @@ def run_backtest(candles: list, params: dict = None, cash: float = 10000.0, fee:
     by_regime = {r: profit_factor([t for t, rr in zip(trades, regimes) if rr == r]) for r in ("BULL", "BEAR", "CHOP")}
     return {"trades": len(trades), "net_profit": round(sum(trades), 4), "profit_factor": profit_factor(trades),
             "win_rate": round(len(wins) / len(trades) * 100, 1) if trades else 0.0, "sharpe": round(sharpe(trades), 3),
-            "max_drawdown": round(max_drawdown(equity), 3), "equity": equity, "params": p, "regime_pf": by_regime, "_cost": cost_basis}
+            "max_drawdown": round(max_drawdown(equity), 3), "equity": equity, "trade_pnls": trades, "params": p, "regime_pf": by_regime, "_cost": cost_basis}
 
 
 def optimization_score(stats: dict) -> float:
@@ -165,6 +166,7 @@ def walk_forward(candles: list, train_bars=2000, test_bars=500, step=500, grid=N
                 best, best_s, train_pf = params, sc, s["profit_factor"]
         oos = run_backtest(test, best, btc_candles=btc_te)
         oos.pop("equity", None)
+        oos.pop("trade_pnls", None)
         oos.update(train_pf=train_pf, window=len(results),
                    stability=(oos["profit_factor"] / train_pf) if train_pf and train_pf != float("inf") and oos["profit_factor"] != float("inf") else None)
         oos["overfit"] = (train_pf != float("inf") and oos["profit_factor"] != float("inf") and train_pf - oos["profit_factor"] > 2) or (train_pf > 3 and oos["profit_factor"] < 1)

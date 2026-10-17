@@ -411,7 +411,11 @@ async def tick_bot(bot: dict):
             if time.time() - bot.get(key, 0) >= 60:
                 await set_bot(uid, **{key: time.time()})
                 await log(db, uid, d, price, asset=asset)
+        elif d["action"] == "BUY" and (blocked := await entry_blocked(uid, bot, asset, d)):
+            await wait_log(uid, bot, blocked[0])
         elif bot["mode"] == "live" and bot.get("manual_confirm"):
+            if d["action"] == "BUY":
+                d = apply_risk_multiplier(d, (await entry_blocked(uid, bot, asset, d, gate_only=True))[1])
             cash = bot.get("live_equity") or 0
             size = buy_usd(bot, d, cash, price) if d["action"] == "BUY" and cash else order_usd(bot)
             await set_bot(uid, pending={"action": d["action"], "asset": asset, "price": price, "size_usd": size,
@@ -420,26 +424,36 @@ async def tick_bot(bot: dict):
             break
         else:
             if d["action"] == "BUY":
-                import gates
-                ok, g = await gates.allows_entry(uid, bot.get("strategy", "luchii003"))
-                if not ok:
-                    await wait_log(uid, bot, f"{d['reason']} · ENTRY BLOCKED · strategy gate {g['state']} ({g['reason']}) · exits still managed")
-                    continue
-                ks = await gates.kill_switch(uid)
-                if ks:
-                    await wait_log(uid, bot, f"{d['reason']} · ENTRY BLOCKED · kill switch: {ks} · exits still managed")
-                    continue
-                if asset == "SOL":
-                    sol = (await gates.rolling(uid))["by_asset"].get("SOL") or {}
-                    if not (sol.get("trades", 0) >= 50 and (sol.get("pf_inf") or (sol.get("profit_factor") or 0) > 1.10)):
-                        await wait_log(uid, bot, f"{d['reason']} · SOL longs disabled until rolling PF > 1.10 over 50+ trades (now PF {sol.get('profit_factor')} / {sol.get('trades', 0)} trades)")
-                        continue
-                if d.get("risk"):
-                    d = {**d, "risk": d["risk"] * risk_multiplier(g.get("profit_factor"), g.get("pf_inf")) / 1.0}
+                d = apply_risk_multiplier(d, (await entry_blocked(uid, bot, asset, d, gate_only=True))[1])
             await execute(bot, d, asset)
             bot = await db.bots.find_one({"user_id": uid})
     bot = await db.bots.find_one({"user_id": uid})
-    await db.bot_pnl.insert_one({"user_id": uid, "ts": now_ms(), "equity": equity(bot)})
+    if equity(bot) > 0:
+        await db.bot_pnl.insert_one({"user_id": uid, "ts": now_ms(), "equity": equity(bot)})
+
+
+def apply_risk_multiplier(d: dict, g: dict) -> dict:
+    if d.get("risk") and g:
+        return {**d, "risk": d["risk"] * risk_multiplier(g.get("profit_factor"), g.get("pf_inf"))}
+    return d
+
+
+async def entry_blocked(uid: str, bot: dict, asset: str, d: dict, gate_only: bool = False):
+    """Returns (reason, gate_doc). reason is None when the entry is allowed."""
+    import gates
+    ok, g = await gates.allows_entry(uid, bot.get("strategy", "luchii003"))
+    if gate_only:
+        return None, g
+    if not ok:
+        return f"{d['reason']} · ENTRY BLOCKED · strategy gate {g['state']} ({g['reason']}) · exits still managed", g
+    ks = await gates.kill_switch(uid)
+    if ks:
+        return f"{d['reason']} · ENTRY BLOCKED · kill switch: {ks} · exits still managed", g
+    if asset == "SOL":
+        sol = (await gates.rolling(uid))["by_asset"].get("SOL") or {}
+        if not (sol.get("trades", 0) >= 50 and (sol.get("pf_inf") or (sol.get("profit_factor") or 0) > 1.10)):
+            return f"{d['reason']} · SOL longs disabled until rolling PF > 1.10 over 50+ trades (now PF {sol.get('profit_factor')} / {sol.get('trades', 0)} trades)", g
+    return None, g
 
 
 async def mirror_solana(db_, bot, side):

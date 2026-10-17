@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import api from "../../lib/api";
 
 const COLOR = { OPEN: "text-neon-green border-neon-green", WARNING: "text-yellow-400 border-yellow-400", RESTRICTED: "text-orange-400 border-orange-400", DISABLED: "text-neon-red border-neon-red" };
-const pf = (s) => (s?.pf_inf ? "∞" : s?.profit_factor == null ? "—" : s.profit_factor.toFixed(2));
+const pf = (s) => (s?.pf_inf ? "∞" : !s?.trades ? "—" : s.profit_factor.toFixed(2));
 
 export default function StrategyHealthCard() {
   const [gate, setGate] = useState(null);
