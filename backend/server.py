@@ -25,7 +25,7 @@ from auth import (check_lockout, clear_fails, create_token, current_user, hash_p
 from db import db, now_ms  # noqa: E402
 from engine import DEFAULT_BOT, get_creds, set_bot, with_exchange  # noqa: E402
 from exchange_service import (ACCOUNTS, EXCHANGES, all_balances, encrypt, friendly, market_order,  # noqa: E402
-                              nonzero_balances, permissions, resolve_symbol, symbol_for, total_usd, verify)
+                              nonzero_balances, permissions, resolve_symbol, total_usd, verify)
 import web3bal  # noqa: E402
 from market import SNAPSHOT  # noqa: E402
 
@@ -141,6 +141,50 @@ async def strategy_gate(user=Depends(current_user)):
 async def strategy_stats(user=Depends(current_user)):
     import gates
     return await gates.rolling(user["id"])
+
+
+@api.post("/strategy/gate/reset")
+async def strategy_gate_reset(user=Depends(current_user)):
+    import gates
+    bot = await get_bot(user)
+    return await gates.reset_gate(user["id"], bot.get("strategy", "luchii003"))
+
+
+@api.get("/strategy/symbols")
+async def strategy_symbols(user=Depends(current_user)):
+    import gates
+    return await gates.symbols(user["id"])
+
+
+class SymbolIn(BaseModel):
+    enabled: bool
+
+
+@api.post("/strategy/symbols/{symbol}")
+async def strategy_symbol_set(symbol: Literal["BTC", "ETH", "SOL"], body: SymbolIn, user=Depends(current_user)):
+    import gates
+    return await gates.set_symbol(user["id"], symbol, body.enabled)
+
+
+@api.get("/trades/audit")
+async def trades_audit(user=Depends(current_user)):
+    import audit
+    return await audit.closed(user["id"])
+
+
+@api.get("/trades/audit.csv")
+async def trades_audit_csv(user=Depends(current_user)):
+    import audit
+    from fastapi.responses import Response
+    rows = await audit.closed(user["id"])
+    return Response(audit.to_csv(rows), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=luchii_trade_audit.csv"})
+
+
+@api.get("/trades/buckets")
+async def trades_buckets(user=Depends(current_user)):
+    import audit
+    rows = await audit.closed(user["id"])
+    return {"trades": len(rows), "buckets": audit.buckets(rows)}
 
 
 @api.get("/strategy/metrics")

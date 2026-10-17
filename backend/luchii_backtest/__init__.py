@@ -131,7 +131,7 @@ def run_backtest(candles: list, params: dict = None, cash: float = 10000.0, fee:
         strategy.RULES["entry"].update(old[0])
         strategy.RULES["risk"]["atr_stop_mult"] = old[1]
     wins = [t for t in trades if t > 0]
-    by_regime = {r: profit_factor([t for t, rr in zip(trades, regimes) if rr == r]) for r in ("BULL", "BEAR", "CHOP")}
+    by_regime = {r: profit_factor([t for t, rr in zip(trades, regimes) if rr == r]) for r in strategy.REGIMES}
     return {"trades": len(trades), "net_profit": round(sum(trades), 4), "profit_factor": profit_factor(trades),
             "win_rate": round(len(wins) / len(trades) * 100, 1) if trades else 0.0, "sharpe": round(sharpe(trades), 3),
             "max_drawdown": round(max_drawdown(equity), 3), "equity": equity, "trade_pnls": trades, "params": p, "regime_pf": by_regime, "_cost": cost_basis}

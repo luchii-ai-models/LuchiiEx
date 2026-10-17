@@ -43,8 +43,8 @@ def cleanup(uid):
 
 # --- pure units
 class TestGateUnits:
-    @pytest.mark.parametrize("pf,dd,n,exp", [(2.0, 5, 60, "OPEN"), (1.1, 5, 60, "WARNING"), (0.9, 5, 60, "RESTRICTED"),
-                                             (2.0, 13, 60, "RESTRICTED"), (0.7, 5, 60, "DISABLED"), (2.0, 16, 60, "DISABLED"), (0.5, 20, 10, "OPEN")])
+    @pytest.mark.parametrize("pf,dd,n,exp", [(2.0, 5, 60, "OPEN"), (1.05, 5, 60, "WARNING"), (0.9, 5, 60, "RESTRICTED"),
+                                             (2.0, 9, 60, "RESTRICTED"), (0.7, 5, 60, "DISABLED"), (2.0, 16, 60, "DISABLED"), (0.5, 20, 10, "OPEN")])
     def test_classify(self, pf, dd, n, exp):
         assert gates.classify(pf, dd, n) == exp
 

@@ -5,6 +5,7 @@ import time
 from datetime import datetime, timezone
 
 import alerts
+import audit
 import brokers
 import strategy
 from db import db, now_ms
@@ -79,13 +80,19 @@ def luchii_signal(bot: dict, asset: str) -> dict:
     return d
 
 
+def snapshot(asset: str) -> tuple:
+    """(indicators for asset, indicators for BTC) — empty dicts while warming up."""
+    m, b = mkt(asset), mkt("BTC")
+    i = strategy.indicators(m["candles"], m["price"], m.get("rsi")) if m.get("candles") else {}
+    bi = strategy.indicators(b["candles"], b["price"], b.get("rsi")) if b.get("candles") else {}
+    return i, bi
+
+
 def entry_guard(bot: dict, asset: str, d: dict):
     """Hard production filters for every long entry (both strategies). Returns a rejection reason or None."""
-    m, b = mkt(asset), mkt("BTC")
-    if not m.get("candles") or not b.get("candles"):
+    i, bi = snapshot(asset)
+    if not i or not bi:
         return "market data warming up"
-    i = strategy.indicators(m["candles"], m["price"], m.get("rsi"))
-    bi = strategy.indicators(b["candles"], b["price"], b.get("rsi"))
     if strategy.nan(i["adx"], i["rsi"], i["volume_ratio"], bi["ema200"], bi["rsi"], bi["trend_pct"]):
         return "indicators warming up"
     score = d.get("score") if d.get("score") is not None else strategy.entry_score(i)[0]
@@ -110,6 +117,11 @@ def risk_multiplier(pf, pf_inf: bool) -> float:
 def decide(bot: dict, asset: str) -> dict:
     d = signal(bot, asset) if bot.get("strategy", "luchii003") == "aggressive" else luchii_signal(bot, asset)
     if d.get("action") == "BUY":
+        if "regime" not in d:
+            i, _ = snapshot(asset)
+            d["regime"] = i.get("regime", "CHOP")
+        if d["regime"] in strategy.NO_TRADE_REGIMES:
+            return {**d, "action": "HOLD", "reason": f"[{asset}] {d['regime']} regime · no new trades"}
         why = entry_guard(bot, asset, d)
         if why:
             return {**d, "action": "HOLD", "reason": f"[{asset}] entry filtered · {why}"}
@@ -229,6 +241,11 @@ async def record_fill(bot: dict, side: str, price: float, qty: float, fill: str,
     await set_bot(uid, **upd)
     await db.bot_trades.insert_one({"user_id": uid, "ts": now_ms(), "side": side, "asset": asset, "price": price, "qty": qty, "pnl": pnl,
                                     "strategy": bot.get("strategy", "luchii003")})
+    if side == "BUY":
+        i, bi = snapshot(asset)
+        await audit.open_trade(bot, asset, price, qty, d, i, bi)
+    else:
+        await audit.close_trade(uid, asset, price, qty, d, bool(d.get("partial") or d.get("fraction")))
     await log(db, uid, d, price, fill, asset)
     await alerts.notify(bot, f"{'🟢' if side == 'BUY' else '🔴'} {side} {qty} {asset} @ ${price:,.2f}" + (f" · P&L {pnl:+.2f}" if side == "SELL" else ""))
     bot = await db.bots.find_one({"user_id": uid})
@@ -399,6 +416,8 @@ async def tick_bot(bot: dict):
         if not price:
             continue
         pos = pos_of(bot, asset)
+        if pos["position_qty"] > 0:
+            await audit.track(uid, asset, price)
         if pos["position_qty"] > 0 and price > float(pos["peak_price"] or 0):
             await set_bot(uid, **pos_fields(asset, peak=price))
             bot = await db.bots.find_one({"user_id": uid})
@@ -448,11 +467,13 @@ async def entry_blocked(uid: str, bot: dict, asset: str, d: dict, gate_only: boo
         return f"{d['reason']} · ENTRY BLOCKED · strategy gate {g['state']} ({g['reason']}) · exits still managed", g
     ks = await gates.kill_switch(uid)
     if ks:
+        if time.time() - bot.get("ks_alert_ts", 0) > 4 * 3600:
+            await set_bot(uid, ks_alert_ts=time.time())
+            await alerts.notify(bot, f"🛑 LUCHII KILL SWITCH\n\nReason: {ks}\nNew entries paused · exits still managed")
         return f"{d['reason']} · ENTRY BLOCKED · kill switch: {ks} · exits still managed", g
-    if asset == "SOL":
-        sol = (await gates.rolling(uid))["by_asset"].get("SOL") or {}
-        if not (sol.get("trades", 0) >= 50 and (sol.get("pf_inf") or (sol.get("profit_factor") or 0) > 1.10)):
-            return f"{d['reason']} · SOL longs disabled until rolling PF > 1.10 over 50+ trades (now PF {sol.get('profit_factor')} / {sol.get('trades', 0)} trades)", g
+    sym = await gates.symbol_state(uid, asset)
+    if sym.get("disabled"):
+        return f"{d['reason']} · {asset} DISABLED ({sym.get('by')}: {sym.get('reason')}) · owner can re-enable in Strategy Health", g
     return None, g
 
 

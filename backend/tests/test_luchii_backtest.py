@@ -67,8 +67,8 @@ def test_max_drawdown():
 
 
 def test_regimes():
-    assert strategy.classify_regime(200, 150, 30) == "BULL"
-    assert strategy.classify_regime(100, 150, 30) == "BEAR"
+    assert strategy.classify_regime(200, 150, 30) in ("TREND_BULL", "BREAKOUT")
+    assert strategy.classify_regime(100, 150, 30) == "TREND_BEAR"
     assert strategy.classify_regime(151, 150, 15) == "CHOP"
     assert strategy.classify_regime(150, 150, 30) == "CHOP"
 

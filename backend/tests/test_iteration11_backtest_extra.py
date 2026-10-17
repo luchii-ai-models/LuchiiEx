@@ -6,6 +6,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from luchii_backtest import deployment_gate, monte_carlo_summary, run_backtest, run_monte_carlo, walk_forward  # noqa: E402
+import strategy  # noqa: E402
 
 
 def synth(n=900, seed=1):
@@ -22,7 +23,7 @@ def test_run_backtest_keys_and_equity():
     r = run_backtest(synth())
     for k in ("trades", "profit_factor", "win_rate", "sharpe", "max_drawdown", "equity", "regime_pf"):
         assert k in r
-    assert min(r["equity"]) >= 0 and set(r["regime_pf"]) == {"BULL", "BEAR", "CHOP"}
+    assert min(r["equity"]) >= 0 and set(r["regime_pf"]) == set(strategy.REGIMES)
     assert 0 <= r["win_rate"] <= 100 and r["max_drawdown"] >= 0
 
 

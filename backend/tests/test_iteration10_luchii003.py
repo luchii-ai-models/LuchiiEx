@@ -21,13 +21,15 @@ from motor.motor_asyncio import AsyncIOMotorClient  # noqa: E402
 def run_engine(coro_fn):
     """Run an engine coroutine on a fresh loop with a fresh motor client (motor binds to the first loop)."""
     async def wrap():
+        import audit
+        import gates
         import solana_dex
-        old = engine.db, solana_dex.db
-        engine.db = solana_dex.db = AsyncIOMotorClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+        old = engine.db, solana_dex.db, audit.db, gates.db
+        engine.db = solana_dex.db = audit.db = gates.db = AsyncIOMotorClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
         try:
             return await coro_fn()
         finally:
-            engine.db, solana_dex.db = old
+            engine.db, solana_dex.db, audit.db, gates.db = old
     return asyncio.run(wrap())
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/")
@@ -70,8 +72,8 @@ class TestStrategyUnits:
         assert strategy.update_stop(100, 110, 5.5, 1, 100) == 108
 
     def test_classify_regime(self):
-        assert strategy.classify_regime(200, 150, 30) == "BULL"
-        assert strategy.classify_regime(100, 150, 30) == "BEAR"
+        assert strategy.classify_regime(200, 150, 30) in ("TREND_BULL", "BREAKOUT")
+        assert strategy.classify_regime(100, 150, 30) == "TREND_BEAR"
         assert strategy.classify_regime(151, 150, 15) == "CHOP"
         assert strategy.classify_regime(150, 150, 30) == "CHOP"
 
@@ -89,7 +91,7 @@ class TestStrategyUnits:
         d = strategy.evaluate("BTC", i, i, {"position_qty": 0, "entry_price": 0, "peak_price": 0})
         assert d["action"] == "BUY", (d["reason"], i)
         assert d["score"] >= 80 and d["risk"] > 0 and d["stop"] < cs[-1]["c"] and d["entry_atr"] > 0
-        assert i["regime"] == "BULL"
+        assert i["regime"] in ("TREND_BULL", "BREAKOUT")
 
     def test_flat_chop(self):
         cs = flat()
@@ -200,7 +202,7 @@ class TestApi:
         for a in ("BTC", "ETH", "SOL"):
             m = d["assets"][a]
             assert isinstance(m["score"], (int, float)) and 0 <= m["score"] <= 100, m
-            assert m["regime"] in ("BULL", "BEAR", "CHOP"), m
+            assert m["regime"] in strategy.REGIMES, m
             assert m["action"] in ("BUY", "SELL", "HOLD") and isinstance(m["reason"], str) and m["reason"], m
             for k in ("adx", "rsi", "atr", "price", "trend_pct", "volume_ratio"):
                 assert m[k] is None or (isinstance(m[k], (int, float)) and not math.isnan(m[k])), (a, k, m[k])

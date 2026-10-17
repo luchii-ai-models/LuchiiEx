@@ -71,15 +71,53 @@ def adx(candles, n=14):
     return sum(dxs[-n:]) / n if len(dxs) >= n else None
 
 
+REGIMES = ("TREND_BULL", "TREND_BEAR", "BREAKOUT", "CHOP", "MEAN_REVERSION", "PANIC")
+NO_TRADE_REGIMES = ("CHOP", "MEAN_REVERSION")
+
+
 def classify_regime(ema50, ema200, adx_v, close=None):
+    """Legacy coarse classifier (EMA50/200 + ADX only)."""
     if nan(ema50, ema200, adx_v):
         return "CHOP"
     if adx_v < 20 or (close and abs(ema50 - ema200) / close < 0.0008):
         return "CHOP"
     if ema50 > ema200 and adx_v > 25:
-        return "BULL"
+        return "TREND_BULL"
     if ema50 < ema200 and adx_v > 25:
-        return "BEAR"
+        return "TREND_BEAR"
+    return "CHOP"
+
+
+def structure(candles: list, price: float, lookback: int = 1440):
+    """'HIGH' if price breaks the lookback high, 'LOW' if it breaks the low, else None."""
+    win = candles[-lookback - 1:-1]
+    if len(win) < 30 or not price:
+        return None
+    if price >= max(c["h"] for c in win):
+        return "HIGH"
+    if price <= min(c["l"] for c in win):
+        return "LOW"
+    return None
+
+
+def regime(i: dict, struct=None) -> str:
+    """Market state machine. Order: PANIC > BREAKOUT > CHOP > TREND > MEAN_REVERSION > CHOP."""
+    adx_v, rsi, e20, e50, e200, a, a_ma, vr = (i.get(k) for k in ("adx", "rsi", "ema20", "ema50", "ema200", "atr", "atr_ma", "volume_ratio"))
+    if nan(adx_v, rsi, e20, e50, e200):
+        return "CHOP"
+    expanding = not nan(a, a_ma) and a > a_ma
+    if expanding and a > a_ma * 3:
+        return "PANIC"
+    if expanding and not nan(vr) and vr > 1.5 and struct:
+        return "BREAKOUT"
+    if adx_v < 20:
+        return "CHOP"
+    if adx_v >= 25 and e20 > e50 > e200 and rsi > 55:
+        return "TREND_BULL"
+    if adx_v >= 25 and e20 < e50 < e200 and rsi < 45:
+        return "TREND_BEAR"
+    if adx_v < 25 and (rsi > 75 or rsi < 25):
+        return "MEAN_REVERSION"
     return "CHOP"
 
 
@@ -93,7 +131,8 @@ def indicators(candles: list, price: float, rsi: float) -> dict:
            "atr": a, "atr_ma": a_ma, "adx": ax,
            "trend_pct": ((e20 - e50) / e50 * 100) if e20 and e50 else None,
            "volume_ratio": (vols[-2] / vma) if vma and len(vols) >= 2 else None}
-    out["regime"] = classify_regime(e50, e200, ax, price)
+    out["structure"] = structure(candles, price)
+    out["regime"] = regime(out, out["structure"])
     out["bull_trend"] = bool(e20 and e50 and e200 and price > e200 and e20 > e50)
     return out
 
@@ -109,7 +148,9 @@ def entry_score(i: dict) -> tuple:
 def risk_pct(score: int, regime: str) -> float:
     r = RULES["risk"]
     base = r["score90"] if score >= 90 else r["score80"] if score >= 80 else r["score70"] if score >= 70 else 0.0
-    return min(base, r["bear"]) if regime == "BEAR" else base
+    if regime == "TREND_BEAR":
+        return min(base, r["bear"])
+    return base * 0.5 if regime == "PANIC" else base
 
 
 def position_size(cash, risk, entry, stop):
@@ -160,12 +201,14 @@ def evaluate(asset: str, i: dict, btc: dict, pos: dict) -> dict:
         return {**base, "action": "HOLD", "reason": f"[{asset}] warming up indicators (need 200 candles)"}
     score = base["score"]
     reg = i["regime"]
-    if reg == "CHOP":
-        return {**base, "action": "HOLD", "reason": f"[{asset}] CHOP regime (ADX {i['adx']:.0f}) · no trade · score {score}/100"}
+    if reg in NO_TRADE_REGIMES:
+        return {**base, "action": "HOLD", "reason": f"[{asset}] {reg} regime (ADX {i['adx']:.0f} · RSI {i['rsi']:.0f}) · no new trades · score {score}/100"}
+    if reg == "BREAKOUT" and i.get("structure") == "LOW":
+        return {**base, "action": "HOLD", "reason": f"[{asset}] BREAKDOWN (new low · vol {i['volume_ratio']:.1f}x) · no longs · score {score}/100"}
     if asset != "BTC" and not btc.get("bull_trend"):
         return {**base, "action": "HOLD", "reason": f"[{asset}] BTC master filter · BTC below EMA200/EMA20<50 · no alt longs · score {score}/100"}
-    if asset != "BTC" and (reg == "BEAR" or btc.get("regime") == "BEAR"):
-        return {**base, "action": "HOLD", "reason": f"[{asset}] BEAR regime ({'BTC' if btc.get('regime') == 'BEAR' else asset}) · no alt longs · score {score}/100"}
+    if asset != "BTC" and (reg == "TREND_BEAR" or btc.get("regime") == "TREND_BEAR"):
+        return {**base, "action": "HOLD", "reason": f"[{asset}] TREND_BEAR regime ({'BTC' if btc.get('regime') == 'TREND_BEAR' else asset}) · no alt longs · score {score}/100"}
     gates = []
     if i["adx"] <= RULES["entry"]["adx_min"]:
         gates.append(f"ADX {i['adx']:.0f}≤25")
