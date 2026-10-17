@@ -79,8 +79,41 @@ def luchii_signal(bot: dict, asset: str) -> dict:
     return d
 
 
+def entry_guard(bot: dict, asset: str, d: dict):
+    """Hard production filters for every long entry (both strategies). Returns a rejection reason or None."""
+    m, b = mkt(asset), mkt("BTC")
+    if not m.get("candles") or not b.get("candles"):
+        return "market data warming up"
+    i = strategy.indicators(m["candles"], m["price"], m.get("rsi"))
+    bi = strategy.indicators(b["candles"], b["price"], b.get("rsi"))
+    if strategy.nan(i["adx"], i["rsi"], i["volume_ratio"], bi["ema200"], bi["rsi"], bi["trend_pct"]):
+        return "indicators warming up"
+    score = d.get("score") if d.get("score") is not None else strategy.entry_score(i)[0]
+    conf = d.get("confidence") or 0
+    checks = [(i["adx"] >= 25, f"ADX {i['adx']:.0f} < 25"), (i["rsi"] < 70, f"RSI {i['rsi']:.0f} ≥ 70"),
+              (i["volume_ratio"] >= 1.2, f"volume {i['volume_ratio']:.2f}x < 1.2"), (score >= 70, f"score {score} < 70"),
+              (conf >= 0.7, f"confidence {conf * 100:.0f}% < 70%")]
+    if asset != "BTC":
+        checks += [(bi["price"] > bi["ema200"], "BTC below EMA200"), (bi["rsi"] > 50, f"BTC RSI {bi['rsi']:.0f} ≤ 50"), (bi["trend_pct"] > 0, "BTC trend negative")]
+    failed = [msg for ok, msg in checks if not ok]
+    return " · ".join(failed) if failed else None
+
+
+def risk_multiplier(pf, pf_inf: bool) -> float:
+    if pf_inf:
+        return 1.0
+    if pf is None:
+        return 1.0
+    return 0.25 if pf < 1.0 else 0.5 if pf < 1.2 else 1.0 if pf < 1.5 else 1.5
+
+
 def decide(bot: dict, asset: str) -> dict:
-    return signal(bot, asset) if bot.get("strategy", "luchii003") == "aggressive" else luchii_signal(bot, asset)
+    d = signal(bot, asset) if bot.get("strategy", "luchii003") == "aggressive" else luchii_signal(bot, asset)
+    if d.get("action") == "BUY":
+        why = entry_guard(bot, asset, d)
+        if why:
+            return {**d, "action": "HOLD", "reason": f"[{asset}] entry filtered · {why}"}
+    return d
 
 
 def mkt(asset: str) -> dict:
@@ -392,6 +425,17 @@ async def tick_bot(bot: dict):
                 if not ok:
                     await wait_log(uid, bot, f"{d['reason']} · ENTRY BLOCKED · strategy gate {g['state']} ({g['reason']}) · exits still managed")
                     continue
+                ks = await gates.kill_switch(uid)
+                if ks:
+                    await wait_log(uid, bot, f"{d['reason']} · ENTRY BLOCKED · kill switch: {ks} · exits still managed")
+                    continue
+                if asset == "SOL":
+                    sol = (await gates.rolling(uid))["by_asset"].get("SOL") or {}
+                    if not (sol.get("trades", 0) >= 50 and (sol.get("pf_inf") or (sol.get("profit_factor") or 0) > 1.10)):
+                        await wait_log(uid, bot, f"{d['reason']} · SOL longs disabled until rolling PF > 1.10 over 50+ trades (now PF {sol.get('profit_factor')} / {sol.get('trades', 0)} trades)")
+                        continue
+                if d.get("risk"):
+                    d = {**d, "risk": d["risk"] * risk_multiplier(g.get("profit_factor"), g.get("pf_inf")) / 1.0}
             await execute(bot, d, asset)
             bot = await db.bots.find_one({"user_id": uid})
     bot = await db.bots.find_one({"user_id": uid})

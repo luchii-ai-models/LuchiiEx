@@ -72,6 +72,14 @@ User choices: copy from trade-bridge-73; use the env values exactly; no Emergent
 - iteration_10: 22 new + 60 regression tests pass; UI verified 1920/390; agent findings fixed.
 - Out of scope (user chose A only): the `luchii-backtest` package / walk-forward / Monte Carlo; governance/ops docs pasted by user are not app features.
 
+## Implemented (2026-10-17, iteration 13 — gates, hard entry filters, win stats, backtest package)
+- `backend/gates.py`: rolling 30-day stats from bot_trades/bot_pnl (PF, win rate, avg gain/loss, max DD) per asset and per strategy; gate state machine OPEN/WARNING/RESTRICTED/DISABLED with hysteresis (3 fails to close, 7 passes PF>1.35/DD<8/100+ trades to reopen, DISABLED sticky) — gates NEW ENTRIES ONLY, exits always run; <50 trades = OPEN by default; audit_log event `strategy_gate_changed`. Kill switch (3 consecutive losses, daily loss >3%, weekly DD >8%). Risk multiplier by rolling PF (0.25/0.5/1/1.5×). SOL longs disabled until SOL rolling PF>1.10 over 50+ trades.
+- `engine.entry_guard` hard filters for every long (both strategies): ADX≥25, RSI<70, volume ratio≥1.2, score≥70, confidence≥70%, and for ETH/SOL BTC>EMA200 + BTC RSI>50 + BTC trend>0.
+- API: GET /api/strategy/gate, GET /api/strategy/stats. Dashboard StrategyHealthCard (gate badge, PF/win/avg+/DD, per-market rows, gate timeline).
+- `backend/luchii_backtest/` (package): Coinbase 1m history fetch, LUCHII_003 simulation with fees/slippage/gap stop & TP handling, profit factor/Sharpe/drawdown, grid walk-forward with stability/overfit flags, seeded Monte Carlo, deployment_gate(). `python -m luchii_backtest.run BTC 3000`. tests/test_luchii_backtest.py (22 tests).
+- First real run (BTC, last 1500 bars): 2 trades, both losers, PF 0 — too little data for walk-forward (needs ≥2500 bars). No profitability claim is made.
+- Not built (org tooling, out of app scope): Jira CSV, Docker/Alembic, Maven/Java SDK, PagerDuty, CI yaml.
+
 ## Known limits
 - Live order placement has not been tested with real keys
 - Some exchanges reject fake secrets with a decode error before the auth call; this is still shown as "Exchange verification failed: …"

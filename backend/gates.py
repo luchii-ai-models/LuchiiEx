@@ -95,6 +95,21 @@ async def evaluate(uid: str, strategy: str) -> dict:
     return out
 
 
+async def kill_switch(uid: str):
+    """3 consecutive losses, daily loss > 3% or weekly drawdown > 8% pauses new entries."""
+    now = now_ms()
+    sells = [t async for t in db.bot_trades.find({"user_id": uid, "side": "SELL"}, {"_id": 0, "pnl": 1, "ts": 1}).sort("ts", -1).limit(3)]
+    if len(sells) == 3 and all(float(t.get("pnl") or 0) <= 0 for t in sells):
+        return "3 consecutive losses"
+    day = [p["equity"] async for p in db.bot_pnl.find({"user_id": uid, "ts": {"$gte": now - 86400_000}}, {"_id": 0, "equity": 1}).sort("ts", 1)]
+    if len(day) > 1 and day[0] > 0 and (day[0] - day[-1]) / day[0] * 100 > 3:
+        return f"daily loss {(day[0] - day[-1]) / day[0] * 100:.1f}% > 3%"
+    week = [p["equity"] async for p in db.bot_pnl.find({"user_id": uid, "ts": {"$gte": now - 7 * 86400_000}}, {"_id": 0, "equity": 1}).sort("ts", 1)]
+    if max_drawdown_pct(week) > 8:
+        return f"weekly drawdown {max_drawdown_pct(week)}% > 8%"
+    return None
+
+
 async def allows_entry(uid: str, strategy: str) -> tuple:
     g = await db.gates.find_one({"user_id": uid, "strategy": strategy}, {"_id": 0})
     if not g or time.time() * 1000 - g.get("updated_at", 0) > 60_000:
