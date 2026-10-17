@@ -112,3 +112,5 @@ User choices: copy from trade-bridge-73; use the env values exactly; no Emergent
 - Fix (iteration_13 HIGH): backtests no longer mutate live strategy.RULES — thread-local override via strategy.rules()/set_rules_override.
 - Tested: iteration_13 31/31 new tests, full regression 259/260 (1 order-dependent flaky test in iteration9, passes alone).
 - Honest 30-day BTC result (Coinbase 1-min, 43,500 candles): walk-forward 1 window skipped (train PF < 1.10), full-period 130 trades, expectancy -$22/trade, DD95 36% → REJECTED. LUCHII_003 has NO proven edge on 1-min BTC yet.
+- 2026-06 FIX (critical, user-reported "bot never trades"): engine.tick_bot treated entry_blocked()'s (None, gate) tuple as truthy → every BUY was swallowed as a reason-less WAITING log since the gate refactor. Fixed to check blocked[0]; regression test tests/test_iteration14_buy_not_swallowed.py (fails on old code). Live OKX path proven with a real $5.50 test order on the owner account (both fills closed).
+- Aggressive strategy now bypasses regime/score/ADX/BTC/agent filters (owner choice "b"); kill switch, strategy gate and symbol kill switch still apply.

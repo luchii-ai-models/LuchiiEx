@@ -443,7 +443,7 @@ async def tick_bot(bot: dict):
             if time.time() - bot.get(key, 0) >= 60:
                 await set_bot(uid, **{key: time.time()})
                 await log(db, uid, d, price, asset=asset)
-        elif d["action"] == "BUY" and (blocked := await entry_blocked(uid, bot, asset, d)):
+        elif d["action"] == "BUY" and (blocked := await entry_blocked(uid, bot, asset, d))[0]:
             await wait_log(uid, bot, blocked[0])
         elif bot["mode"] == "live" and bot.get("manual_confirm"):
             if d["action"] == "BUY":
