@@ -138,7 +138,7 @@ async def symbol_state(uid: str, symbol: str, stats: dict = None) -> dict:
         await db.symbol_gates.update_one({"user_id": uid, "symbol": symbol}, {"$setOnInsert": doc}, upsert=True)
     if doc["disabled"]:
         return doc
-    st = ((stats or await rolling(uid, doc.get("since") or 0))["by_asset"].get(symbol)) or trade_stats([])
+    st = ((stats if stats and not doc.get("since") else await rolling(uid, doc.get("since") or 0))["by_asset"].get(symbol)) or trade_stats([])
     pf = float("inf") if st["pf_inf"] else (st["profit_factor"] or 0.0)
     doc.update({"profit_factor": st["profit_factor"], "trades": st["trades"], "win_rate": st["win_rate"]})
     if st["trades"] >= SYMBOL_MIN_TRADES and pf < SYMBOL_PF_KILL:

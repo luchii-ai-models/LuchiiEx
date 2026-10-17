@@ -91,3 +91,13 @@ User choices: copy from trade-bridge-73; use the env values exactly; no Emergent
 ## Backlog
 - P1: Connect an LLM for Luchii chat and help when the user wants it
 - P2: Dedicated Solana RPC; TP/SL for Solana token positions themselves (currently they follow the BTC signal)
+
+
+## 2026-06 · Phase 1 of three-layer architecture (tested: iteration_12, 22/22 + regression)
+- Regime engine (strategy.regime): TREND_BULL / TREND_BEAR / BREAKOUT / CHOP / MEAN_REVERSION / PANIC. CHOP + MEAN_REVERSION = no new trades (both strategies). BREAKDOWN (new low) = no longs. PANIC = 0.5x risk.
+- Gate rules: OPEN PF>1.10 & DD<8; WARNING PF<1.10; RESTRICTED PF<1.0 or DD>8 (hysteresis); DISABLED PF<0.8 or DD>15 or 10 losses in a row; MIN_TRADES 30. DISABLED sticky; POST /api/strategy/gate/reset (owner) re-opens, restarts rolling stats from reset time, audit_log + Telegram.
+- Symbol kill switch (db.symbol_gates): PF<0.9 over 20+ trades auto-disables symbol; SOL disabled by policy by default; GET /api/strategy/symbols, POST /api/strategy/symbols/{BTC|ETH|SOL} {enabled}. Owner re-enable restarts stats from that time.
+- Telegram alerts: gate state changes, symbol disable/enable, kill switch (once per 4h).
+- Trade audit (db.trade_audit): full schema incl. score/adx/rsi/vol/btc state/regime/entry+exit reason/MAE/MFE/fees/slippage/net. GET /api/trades/audit, /api/trades/audit.csv, /api/trades/buckets (score/ADX/regime/symbol buckets).
+- StrategyHealthCard: CSV export, per-symbol ON/OFF toggles, owner re-enable button when DISABLED.
+- Backlog (Phase 2/3): 30-day walk-forward (train20/val5/test5 sliding), 5000-run Monte Carlo with probability of ruin, multi-agent voting, reinforcement ranking, dynamic symbol rotation. Profitability is NOT guaranteed; no live edge proven yet.

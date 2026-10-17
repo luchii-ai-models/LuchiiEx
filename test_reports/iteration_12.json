@@ -1,0 +1,38 @@
+{
+  "summary": "Phase 1 tested: regime engine units, symbol kill switch API, gate DISABLED + owner reset, trade audit (paper BUY->SELL round trip, /trades/audit, .csv, /buckets), unauthenticated access on new endpoints, and the StrategyHealthCard UI (admin + a fresh DISABLED-gate user). New suite tests/test_iteration12_phase1.py: 21/22 pass. Full regression: 227/229 pass. One real bug: after an auto-kill, the owner re-enable is undone on the next GET /api/strategy/symbols. The iteration5 disconnect test fails only under xdist and passes serially (-n0).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/strategy/symbols (gates.symbols -> symbol_state)", "issue": "The owner's re-enable of an auto-killed symbol is ignored. symbols() computes stats = rolling(uid) with since=0 and passes them to symbol_state(), which uses them instead of rolling(uid, doc['since']). The old losing trades are still counted, so the very next GET re-disables the symbol with by='auto', writes another symbol_disabled audit event and sends another Telegram alert. The owner can never re-enable a symbol that was auto-killed. Reproduced in TestSymbols::test_reenable_after_auto_kill_stays_enabled (ETH re-killed: PF 0.46 over 25 trades, since=<re-enable ts>).", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "GET /api/strategy/stats", "issue": "Ignores the gate's 'since'. After an owner gate reset the card's top-row PF/WIN and per-asset N still show the pre-reset trades (e.g. PF 12.00, N 40), while gate-reason says '0 trades/30d'. This is confusing; consider passing the gate since, or labelling the numbers as 30d raw."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "RecentTrades.jsx (and ExecutionLog.jsx)", "issue": "t.price.toLocaleString crashes the whole dashboard (no error boundary) if any bot_trades row lacks price. Seen with synthetic trades only, but a single bad row blanks the app. Use Number(t.price || 0) and/or add an ErrorBoundary.", "selector": "RecentTrades", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_iteration12_phase1.py", "/app/backend/tests/it12_setup_ui_disabled_user.py", "/app/test_reports/pytest/iteration12.xml"],
+  "action_items": [
+    "Fix gates.symbols(): don't pass the shared since=0 stats to symbol_state for symbols with doc.since>0 (e.g. call rolling(uid, doc['since']) per symbol when since>0), so an owner re-enable restarts the stats window. Then rerun tests/test_iteration12_phase1.py::TestSymbols::test_reenable_after_auto_kill_stays_enabled",
+    "Optional: make /strategy/stats (or the card) respect the gate reset 'since' so the numbers match the gate reason",
+    "Optional: guard t.price/l.price in RecentTrades/ExecutionLog and add a React ErrorBoundary"
+  ],
+  "critical_code_review_comments": [
+    "gates.symbol_state: the stats param bypasses the per-symbol since (root cause of the HIGH bug above)",
+    "audit.close_trade: notional_out = gross + entry*qty only approximates the exit notional when there were partial sells at different prices. Fees on partial slices are not modelled separately. Acceptable but approximate.",
+    "audit.track is only called in tick_bot, so MAE/MFE come from tick sampling (they can be 0/0 for short trades)",
+    "strategy.regime: BREAKOUT triggers for both struct HIGH and LOW. evaluate() blocks LOW (BREAKDOWN) correctly, but the audit/bucket regime label for breakdowns will read BREAKOUT."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration12_phase1.py", "/app/backend/tests/it12_setup_ui_disabled_user.py"],
+  "success_rate": {"backend": "95% (21/22 new; 227/229 full suite incl. 1 xdist-flaky)", "frontend": "100%"},
+  "seed_data_creation": "Only temporary TEST users (test_it12_*), all cleaned up. Admin's SOL was toggled ON then back OFF (restored). An audit_log symbol_enabled/symbol_disabled pair now exists for admin.",
+  "test_credentials": "admin@gravia.io / Gravia@2026 (from /app/memory/test_credentials.md)",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: cd /app/backend && python -m pytest tests -q (pytest.ini uses xdist; use -n0 for serial). test_iteration5 disconnect test is flaky under xdist only. Synthetic bot_trades must include price/qty or the RecentTrades UI crashes. UI DISABLED-gate user: python tests/it12_setup_ui_disabled_user.py (password TestPass123!).",
+  "rca of the issue": "Repro: fresh user -> GET /strategy/symbols -> insert 25 ETH SELL trades (12x +0.5, 13x -1.0) -> GET shows ETH disabled by auto -> POST /strategy/symbols/ETH {enabled:true} returns disabled=false, since=now -> GET /strategy/symbols shows ETH disabled by auto again. Cause: gates.symbols() calls rolling(uid) (since=0) once and passes it as stats. symbol_state evaluates `stats or await rolling(uid, since)`, so since is never applied. Fix: per symbol, use rolling(uid, doc['since']) when doc.since>0, or filter the trades by since."
+}
