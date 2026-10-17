@@ -1,9 +1,9 @@
 import { useMemo, useRef, useState } from "react";
-import { ZoomIn, ZoomOut, RotateCcw } from "lucide-react";
+import { ZoomIn, ZoomOut, RotateCcw, Maximize2, X } from "lucide-react";
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
-export default function CandleChart({ snapshot, bot }) {
+export default function CandleChart({ snapshot, bot, full = false, onToggleFull }) {
   const candles = snapshot?.candles || [];
   const price = snapshot?.price;
   const total = candles.length;
@@ -82,7 +82,7 @@ export default function CandleChart({ snapshot, bot }) {
   const zoomBtn = "h-6 w-6 flex items-center justify-center border border-term-border text-term-muted hover:text-neon-magenta hover:border-neon-magenta transition-colors";
 
   return (
-    <div className="panel p-2 shrink-0">
+    <div className={full ? "fixed inset-0 z-[200] bg-black p-2 flex flex-col" : "panel p-2 shrink-0"} style={full ? { position: "fixed" } : undefined} data-testid={full ? "chart-fullscreen" : "chart-card"}>
       <div className="flex items-center justify-between mb-1">
         <div className="flex items-center gap-2">
           <span className="panel-label">◈ BTC/USD · 1M</span>
@@ -94,13 +94,16 @@ export default function CandleChart({ snapshot, bot }) {
           <button data-testid="chart-zoom-in" onClick={() => zoom(-1)} className={zoomBtn} title="Zoom in"><ZoomIn size={12} /></button>
           <button data-testid="chart-zoom-out" onClick={() => zoom(1)} className={zoomBtn} title="Zoom out"><ZoomOut size={12} /></button>
           <button data-testid="chart-zoom-reset" onClick={resetView} className={zoomBtn} title="Reset"><RotateCcw size={11} /></button>
+          <button data-testid={full ? "chart-fullscreen-close" : "chart-fullscreen-open"} onClick={onToggleFull} className={zoomBtn} title={full ? "Close" : "Pop-out full screen"}>
+            {full ? <X size={12} /> : <Maximize2 size={12} />}
+          </button>
           <span className={`ml-1 px-1.5 py-0.5 text-[9px] tracking-[0.25em] border ${bot?.status === "running" ? "border-neon-green text-neon-green" : "border-neon-cyan text-neon-cyan"}`}>
             {bot?.status === "running" ? "LIVE FEED" : "STANDBY"}
           </span>
         </div>
       </div>
       <svg data-testid="candle-chart-svg" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none"
-        className="w-full touch-none select-none" style={{ height: "clamp(140px, 22vh, 240px)" }}
+        className={`w-full touch-none select-none ${full ? "flex-1 min-h-0" : ""}`} style={full ? { height: "calc(100vh - 80px)" } : { height: "clamp(140px, 22vh, 240px)" }}
         onWheel={onWheel} onTouchStart={onTouchStart} onTouchMove={onTouchMove}>
         <defs>
           <linearGradient id="grid" x1="0" y1="0" x2="0" y2="1">

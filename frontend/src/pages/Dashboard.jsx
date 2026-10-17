@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";
 import api from "../lib/api";
 import { useAuth } from "../context/AuthContext";
@@ -10,6 +11,7 @@ import StreakCard from "../components/terminal/StreakCard";
 import SignalScoreCard from "../components/terminal/SignalScoreCard";
 import StrategyHealthCard from "../components/terminal/StrategyHealthCard";
 import ValidationCard from "../components/terminal/ValidationCard";
+import Collapsible from "../components/terminal/Collapsible";
 import NodeField from "../components/terminal/NodeField";
 import PnlChart from "../components/terminal/PnlChart";
 import RecentTrades from "../components/terminal/RecentTrades";
@@ -25,6 +27,7 @@ export default function Dashboard() {
   const [snapshot, setSnapshot] = useState(null);
   const [bot, setBot] = useState(null);
   const [logs, setLogs] = useState([]);
+  const [chartFull, setChartFull] = useState(false);
   const [trades, setTrades] = useState([]);
   const [pnl, setPnl] = useState([]);
   const [leaderboard, setLeaderboard] = useState([]);
@@ -99,7 +102,8 @@ export default function Dashboard() {
 
         {/* CENTER */}
         <div className="lg:col-span-6 flex flex-col gap-2 min-h-0">
-          <CandleChart snapshot={snapshot} bot={bot} />
+          <CandleChart snapshot={snapshot} bot={bot} onToggleFull={() => setChartFull(true)} />
+          {chartFull && createPortal(<CandleChart snapshot={snapshot} bot={bot} full onToggleFull={() => setChartFull(false)} />, document.body)}
           <div className="min-h-[260px] lg:min-h-0 flex flex-col flex-1">
             <NodeField logs={logs} />
           </div>
@@ -108,10 +112,10 @@ export default function Dashboard() {
 
         {/* RIGHT */}
         <div className="lg:col-span-3 flex flex-col gap-2 min-h-0 lg:overflow-y-auto">
-          <StreakCard leaderboard={leaderboard} bot={bot} user={user} />
-          <SignalScoreCard bot={bot} />
-          <StrategyHealthCard />
-          <ValidationCard assets={bot?.assets} />
+          <Collapsible id="trader" title="#1 TRADER · LIVE STREAK"><StreakCard leaderboard={leaderboard} bot={bot} user={user} /></Collapsible>
+          <Collapsible id="signal" title="SIGNAL SCORE"><SignalScoreCard bot={bot} /></Collapsible>
+          <Collapsible id="strategy" title="STRATEGY HEALTH · 30D"><StrategyHealthCard /></Collapsible>
+          <Collapsible id="validation" title="AGENT VOTE · VALIDATION"><ValidationCard assets={bot?.assets} /></Collapsible>
           <OrderBook snapshot={snapshot} />
           <div className="grid grid-cols-2 gap-2 flex-1 min-h-[220px]">
             <RecentTrades trades={trades} />

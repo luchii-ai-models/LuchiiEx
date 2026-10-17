@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Maximize2, X } from "lucide-react";
 import api from "../../lib/api";
 
@@ -69,7 +70,7 @@ export default function ExecutionLog({ logs }) {
         )}
         {rows.map((l, i) => <Row key={l.ts + "-" + i} l={l} i={i} />)}
       </div>
-      {open && <FullLog onClose={() => setOpen(false)} />}
+      {open && createPortal(<FullLog onClose={() => setOpen(false)} />, document.body)}
     </div>
   );
 }
