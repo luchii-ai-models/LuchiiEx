@@ -125,6 +125,7 @@ class ConfigIn(BaseModel):
     trailing_stop: Optional[bool] = None
     partial_tp: Optional[bool] = None
     maker_entries: Optional[bool] = None
+    dip_entries: Optional[bool] = None
     aggressive: Optional[bool] = None
     size_pct: Optional[float] = Field(None, ge=0, le=100)
     assets: Optional[list[Literal["BTC", "ETH", "SOL"]]] = Field(None, min_length=1)

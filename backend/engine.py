@@ -199,6 +199,9 @@ def signal(bot: dict, asset: str = "BTC") -> dict:
     tp_txt = f"+{bot.get('take_profit_pct')}% +{fee_round_trip_pct(bot):.2f}% fees = +{tp}% net"
     if not flat and pos["entry_price"]:
         move = (price - pos["entry_price"]) / pos["entry_price"] * 100
+        dip_stop = float(pos.get("stop_price") or 0)
+        if dip_stop and price <= dip_stop:
+            return {"action": "SELL", "confidence": 0.95, "reason": f"[{asset}] DIP STOP hit {move:+.2f}% (tight stop ${dip_stop:,.2f}) · RSI {r}"}
         if tp and move >= tp - 1e-9 and not pos["tp_taken"]:
             if bot.get("partial_tp", True):
                 return {"action": "SELL", "partial": True, "confidence": 0.95, "reason": f"[{asset}] PARTIAL TAKE PROFIT {move:+.2f}% (target {tp_txt}) · selling half, rest rides trailing stop · RSI {r}"}
@@ -216,6 +219,12 @@ def signal(bot: dict, asset: str = "BTC") -> dict:
                 return {"action": "SELL", "confidence": 0.95, "reason": f"[{asset}] TRAILING STOP hit {drop:+.2f}% from peak ${peak:,.2f} (locked {move:+.2f}%) · RSI {r}"}
         elif sl and move <= -sl:
             return {"action": "SELL", "confidence": 0.95, "reason": f"[{asset}] STOP LOSS hit {move:+.2f}% (limit -{sl}%) · RSI {r}"}
+    if flat and agg and bot.get("dip_entries", True) and r < 25 and len(closes) >= 3 and closes[-1] > closes[-2] <= closes[-3]:
+        last_stop = (bot.get("last_stop") or {}).get(asset) or {}
+        if not (last_stop and time.time() - last_stop.get("ts", 0) < float(bot.get("reentry_cooldown_min", 15)) * 60):
+            tight = float(bot.get("dip_stop_pct") or 0.25)
+            return {"action": "BUY", "confidence": 0.8, "dip": True, "stop": price * (1 - tight / 100),
+                    "reason": f"[{asset}] OVERSOLD DIP · RSI {r} < 25 · first green candle after the sell-off · tight stop -{tight}% · AGGRESSIVE"}
     if flat and s7 > s25 and r < rsi_cap:
         last_stop = (bot.get("last_stop") or {}).get(asset) or {}
         cooldown = float(bot.get("reentry_cooldown_min", 15))

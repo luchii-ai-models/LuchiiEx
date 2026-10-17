@@ -85,6 +85,7 @@ function ConfigTab({ bot, refresh, connected }) {
   const [trail, setTrail] = useState(bot?.trailing_stop ?? true);
   const [partial, setPartial] = useState(bot?.partial_tp ?? true);
   const [maker, setMaker] = useState(bot?.maker_entries ?? true);
+  const [dip, setDip] = useState(bot?.dip_entries ?? true);
   const [aggr, setAggr] = useState(bot?.aggressive ?? true);
   const [sizePct, setSizePct] = useState(bot?.size_pct ?? 50);
   const [assets, setAssets] = useState(bot?.assets ?? ["BTC", "ETH", "SOL"]);
@@ -94,7 +95,7 @@ function ConfigTab({ bot, refresh, connected }) {
 
   const save = async () => {
     try {
-      await api.post("/bot/config", { position_usd: Number(posUsd), auto_fund: autoFund, take_profit_pct: Number(tp), stop_loss_pct: Number(sl), trend_filter: trendF, volume_filter: volF, trailing_stop: trail, partial_tp: partial, maker_entries: maker, aggressive: aggr, size_pct: Number(sizePct), assets, strategy: strat });
+      await api.post("/bot/config", { position_usd: Number(posUsd), auto_fund: autoFund, take_profit_pct: Number(tp), stop_loss_pct: Number(sl), trend_filter: trendF, volume_filter: volF, trailing_stop: trail, partial_tp: partial, maker_entries: maker, dip_entries: dip, aggressive: aggr, size_pct: Number(sizePct), assets, strategy: strat });
       toast.success("Config saved"); refresh();
     } catch (e) { toast.error(formatApiErrorDetail(e.response?.data?.detail)); }
   };
@@ -147,6 +148,7 @@ function ConfigTab({ bot, refresh, connected }) {
       <p className="text-[9px] text-term-muted -mt-3">The bot checks the market every 5 seconds and exits the position as soon as either target is hit. 0 disables a target.</p>
       <Toggle on={trail} onClick={() => setTrail(!trail)} testId="trailing-stop-toggle" labelOn="TRAILING STOP ON · STOP FOLLOWS THE PEAK PRICE" labelOff="TRAILING STOP OFF · FIXED STOP FROM ENTRY" />
       <Toggle on={partial} onClick={() => setPartial(!partial)} testId="partial-tp-toggle" labelOn="PARTIAL TAKE PROFIT ON · SELL HALF AT TARGET, REST RIDES" labelOff="PARTIAL TAKE PROFIT OFF · SELL ALL AT TARGET" />
+      <Toggle on={dip} onClick={() => setDip(!dip)} testId="dip-entries-toggle" labelOn="OVERSOLD DIP ENTRIES ON · RSI < 25 + FIRST GREEN CANDLE · TIGHT -0.25% STOP" labelOff="OVERSOLD DIP ENTRIES OFF · SMA CROSS ONLY" />
       <p className="text-[9px] text-term-muted -mt-3">With trailing on, the stop-loss % is measured from the highest price since entry, so gains get locked in as the price rises.</p>
       <div>
         <Label>ENTRY FILTERS{aggr ? " · RELAXED BY AGGRESSIVE MODE" : ""}</Label>
