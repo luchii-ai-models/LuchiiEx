@@ -179,3 +179,43 @@ async def market_order(ex, symbol: str, side: str, usd: float, qty: float, price
         except Exception:
             pass
     return o
+
+
+async def place_stop(ex, exchange: str, symbol: str, qty: float, stop_price: float) -> dict:
+    """Exchange-side stop-market sell so the stop fires even if this server is offline. Returns {id, price, qty}."""
+    amount = float(ex.amount_to_precision(symbol, qty))
+    px = float(ex.price_to_precision(symbol, stop_price))
+    if exchange == "okx":
+        o = await ex.create_order(symbol, "conditional", "sell", amount, None, {"tdMode": "cash", "slTriggerPx": str(px), "slOrdPx": "-1"})
+    else:
+        o = await ex.create_order(symbol, "market", "sell", amount, None, {"stopLossPrice": px})
+    return {"id": o.get("id"), "price": px, "qty": amount}
+
+
+async def cancel_stop(ex, exchange: str, symbol: str, stop_id: str) -> bool:
+    for params in ({"stop": True}, {"trigger": True}, {}):
+        try:
+            await ex.cancel_order(stop_id, symbol, params)
+            return True
+        except Exception as e:  # noqa: BLE001
+            last = e
+    msg = str(last).lower()
+    return "not exist" in msg or "not found" in msg or "51400" in msg or "51401" in msg
+
+
+async def stop_status(ex, exchange: str, symbol: str, stop_id: str) -> dict:
+    """{'state': 'open'|'filled'|'canceled'|'unknown', 'price': avg fill or None, 'qty': filled}."""
+    for params in ({"stop": True}, {"trigger": True}):
+        try:
+            o = await ex.fetch_order(stop_id, symbol, params)
+            st = (o.get("status") or "").lower()
+            info = o.get("info") or {}
+            raw = (info.get("state") or "").lower()
+            if st == "closed" or raw in ("effective", "filled"):
+                return {"state": "filled", "price": o.get("average") or o.get("price"), "qty": o.get("filled") or o.get("amount")}
+            if st == "canceled" or raw in ("canceled", "order_failed"):
+                return {"state": "canceled", "price": None, "qty": 0}
+            return {"state": "open", "price": None, "qty": 0}
+        except Exception:  # noqa: BLE001
+            continue
+    return {"state": "unknown", "price": None, "qty": 0}

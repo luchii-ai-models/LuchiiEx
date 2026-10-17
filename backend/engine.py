@@ -9,7 +9,8 @@ import audit
 import brokers
 import strategy
 from db import db, now_ms
-from exchange_service import all_balances, client_from_doc, ensure_funds, friendly, market_order, resolve_symbol, total_usd
+from exchange_service import (all_balances, cancel_stop, client_from_doc, ensure_funds, friendly, market_order, place_stop, resolve_symbol,
+                              stop_status, total_usd)
 from market import SNAPSHOT
 
 START_CASH = 10000.0
@@ -356,7 +357,11 @@ async def execute(bot: dict, d: dict, asset: str = "BTC"):
                 return await wait_log(uid, bot, f"[{asset}] BUY signal skipped · ${usd} is below the {symbol} minimum (≈ ${round(max(min_qty * price, min_cost), 2)}). Raise POSITION SIZE / % or deposit more.")
             o = await market_order(ex, symbol, "BUY", usd, 0, price)
             qty = float(o.get("filled") or 0) or usd / price
+            fill_px = float(o.get("average") or price)
+            await arm_stop(ex, creds["exchange"], uid, asset, symbol, qty, protective_stop(bot, asset, pos, fill_px, d), fill_px)
         else:
+            await disarm_stop(ex, creds["exchange"], uid, bot, asset)
+            bot = {**bot, "exchange_stops": {**(bot.get("exchange_stops") or {}), asset: None}}
             want = pos["position_qty"] * sell_fraction(d)
             qty = min(want, await free_of(ex, asset))
             if d.get("fraction") and (qty < min_qty or qty * price < min_cost):
@@ -374,6 +379,9 @@ async def execute(bot: dict, d: dict, asset: str = "BTC"):
                 return await wait_log(uid, bot, f"[{asset}] SELL signal skipped · only {qty} {asset} free in trading (minimum {min_qty}).")
             o = await market_order(ex, symbol, "SELL", 0, qty, price)
             qty = float(o.get("filled") or 0) or qty
+            left = pos["position_qty"] - qty
+            if (d.get("partial") or d.get("fraction")) and left * price >= max(min_cost, min_qty * price, 1):
+                await arm_stop(ex, creds["exchange"], uid, asset, symbol, left, protective_stop(bot, asset, pos, pos["entry_price"], d), price)
         await record_fill(bot, side, float(o.get("average") or price), round(qty, 8), f"LIVE FILLED #{o.get('id')}", d, asset)
     except Exception as e:
         await log(db, uid, {**d, "reason": f"{d['reason']} · order error: {friendly(e)[:160]}"}, price, "REJECTED", asset)
@@ -381,7 +389,7 @@ async def execute(bot: dict, d: dict, asset: str = "BTC"):
         await ex.close()
 
 
-async def sync_position(bot: dict, bal: dict):
+async def sync_position(bot: dict, bal: dict, ex=None, exchange: str = None):
     uid = bot["user_id"]
     for asset in bot.get("assets") or ["BTC"]:
         price = mkt(asset).get("price") or 0
@@ -393,8 +401,80 @@ async def sync_position(bot: dict, bal: dict):
             await log(db, uid, {"action": "HOLD", "engine": "sync", "confidence": 1.0,
                                 "reason": f"[{asset}] Synced position: {round(held, 8)} {asset} on exchange · entry set to ${price:,.2f} (P&L counted from now)"}, price, "SYNCED")
         elif pos["position_qty"] > 0 and held < pos["position_qty"] * 0.5:
+            st = (bot.get("exchange_stops") or {}).get(asset)
+            if st and ex is not None:
+                status = await stop_status(ex, exchange, st["symbol"], st["id"])
+                if status["state"] == "filled":
+                    px = float(status["price"] or st["price"])
+                    await set_bot(uid, **{f"exchange_stops.{asset}": None})
+                    await record_fill(bot, "SELL", px, pos["position_qty"], f"EXCHANGE STOP #{st['id']}",
+                                      {"action": "SELL", "confidence": 1.0, "reason": f"[{asset}] EXCHANGE-SIDE STOP triggered on OKX @ ${px:,.2f} (server-independent protection)"}, asset)
+                    continue
             gone = held < dust
             await set_bot(uid, **pos_fields(asset, qty=0.0 if gone else round(held, 8), entry=0.0 if gone else pos["entry_price"]))
+
+
+def protective_stop(bot: dict, asset: str, pos: dict, entry: float, d: dict = None) -> float:
+    """Price for the exchange-side stop: strategy stop (ATR/tiers) or hard SL%, raised by the trailing floor once in profit."""
+    sl = float(bot.get("stop_loss_pct") or 0)
+    cands = [float((d or {}).get("stop") or 0), pos.get("stop_price") or 0]
+    if sl:
+        cands.append(entry * (1 - sl / 100))
+        peak = max(float(pos.get("peak_price") or 0), entry)
+        if bot.get("trailing_stop", True) and peak > entry:
+            cands.append(peak * (1 - sl / 100))
+    return max(cands)
+
+
+async def arm_stop(ex, exchange: str, uid: str, asset: str, symbol: str, qty: float, stop_px: float, price: float):
+    if not stop_px or stop_px >= price or qty <= 0:
+        return
+    try:
+        free = await free_of(ex, asset)
+        qty = min(qty, free) if free > 0 else qty
+        if hasattr(ex, "amount_to_precision"):
+            step = float(ex.amount_to_precision(symbol, qty))
+            qty = step if step <= free or free <= 0 else float(ex.amount_to_precision(symbol, free * 0.999))
+        st = await place_stop(ex, exchange, symbol, qty, stop_px)
+        await set_bot(uid, **{f"exchange_stops.{asset}": {**st, "symbol": symbol, "ts": now_ms()}, "stop_retry_ts": 0})
+        await log(db, uid, {"action": "HOLD", "engine": "guard", "confidence": 1.0,
+                            "reason": f"[{asset}] exchange-side STOP armed on {exchange} @ ${st['price']:,.2f} for {st['qty']} {asset} · fires even if this server is offline"}, price, f"STOP #{st['id']}", asset)
+    except Exception as e:
+        await set_bot(uid, stop_retry_ts=time.time())
+        await log(db, uid, {"action": "HOLD", "engine": "guard", "confidence": 1.0,
+                            "reason": f"[{asset}] could not arm exchange-side stop: {friendly(e)[:140]} · engine stop still active · retry in 10 min"}, price, "REJECTED", asset)
+
+
+async def disarm_stop(ex, exchange: str, uid: str, bot: dict, asset: str):
+    st = (bot.get("exchange_stops") or {}).get(asset)
+    if not st:
+        return
+    try:
+        await cancel_stop(ex, exchange, st["symbol"], st["id"])
+    except Exception as e:
+        log_.warning("cancel stop failed: %s", e)
+    await set_bot(uid, **{f"exchange_stops.{asset}": None})
+
+
+async def sync_stops(ex, exchange: str, bot: dict):
+    """Keep the exchange-side stop in step with the engine's trailing/tier stop (replace when it moves up > 0.1%)."""
+    uid = bot["user_id"]
+    if time.time() - bot.get("stop_retry_ts", 0) < 600:
+        return
+    for asset in bot.get("assets") or ["BTC"]:
+        pos = pos_of(bot, asset)
+        st = (bot.get("exchange_stops") or {}).get(asset)
+        price = mkt(asset).get("price") or 0
+        if pos["position_qty"] <= 0 or not price:
+            continue
+        want = protective_stop(bot, asset, pos, pos["entry_price"])
+        if not want or want >= price:
+            continue
+        if st and want <= st["price"] * 1.001 and abs(st["qty"] - pos["position_qty"]) / pos["position_qty"] < 0.02:
+            continue
+        symbol = st["symbol"] if st else await resolve_symbol(ex, exchange, asset)
+        await disarm_stop(ex, exchange, uid, bot, asset)
+        await arm_stop(ex, exchange, uid, asset, symbol, pos["position_qty"], want, price)
 
 
 async def refresh_live_equity(bot: dict):
@@ -410,7 +490,9 @@ async def refresh_live_equity(bot: dict):
         if eq > 0 and fresh and not fresh.get("start_equity"):
             await set_bot(bot["user_id"], start_equity=eq, start_ts=now_ms())
         if "position_qty" in bot:
-            await sync_position(bot, bal)
+            await sync_position(bot, bal, ex, creds["exchange"])
+            fresh = await db.bots.find_one({"user_id": bot["user_id"]})
+            await sync_stops(ex, creds["exchange"], fresh)
     except Exception as e:
         log_.warning("live equity failed: %s", e)
     finally:
