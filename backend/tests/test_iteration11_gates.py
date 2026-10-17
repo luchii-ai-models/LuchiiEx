@@ -210,7 +210,7 @@ class TestGateAPI:
             states.append(g["state"])
         assert states == ["WARNING", "WARNING", "RESTRICTED"], states
         assert g["profit_factor"] == 0.9 and g["trades"] == 60 and len(g["history"]) >= 2
-        ev = list(mdb.audit_log.find({"user_id": uid, "event": "strategy_gate_changed"}))
+        ev = list(mdb.audit_log.find({"user_id": uid, "event": "strategy_gate_changed"}).sort("ts", 1))
         assert [(e["oldState"], e["newState"]) for e in ev] == [("OPEN", "WARNING"), ("WARNING", "RESTRICTED")]
         s = requests.get(f"{BASE_URL}/api/strategy/stats", headers=user["h"], timeout=20).json()
         assert s["by_strategy"]["luchii003"]["trades"] == 60 and {"BTC", "ETH", "SOL"} <= set(s["by_asset"])

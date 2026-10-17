@@ -79,6 +79,24 @@ def rsi(closes, n=14):
     return 100.0 if l == 0 else round(100 - 100 / (1 + g / l), 1)
 
 
+_IND_CACHE: dict = {}
+LOOKBACK = 400
+
+
+def indicator_series(candles: list) -> list:
+    """indicators() for every bar, computed once per candle series (params do not affect indicators)."""
+    key = (id(candles), len(candles), candles[0]["t"] if candles else 0)
+    if key not in _IND_CACHE:
+        if len(_IND_CACHE) > 8:
+            _IND_CACHE.clear()
+        out = [None] * len(candles)
+        for k in range(210, len(candles)):
+            window = candles[max(0, k - LOOKBACK):k + 1]
+            out[k] = strategy.indicators(window, window[-1]["c"], rsi([c["c"] for c in window]))
+        _IND_CACHE[key] = out
+    return _IND_CACHE[key]
+
+
 def run_backtest(candles: list, params: dict = None, cash: float = 10000.0, fee: float = 0.001, slippage: float = 0.0005,
                  btc_candles: list = None) -> dict:
     p = {"score_min": 80, "adx_min": 25, "rsi_min": 55, "trend_min": 0.08, "volume_min": 1.5, "atr_stop": 2.5, **(params or {})}
@@ -88,13 +106,12 @@ def run_backtest(candles: list, params: dict = None, cash: float = 10000.0, fee:
     equity, trades, regimes = [cash], [], []
     pos = {"position_qty": 0.0, "entry_price": 0.0, "peak_price": 0.0, "stop_price": 0.0, "tiers_done": 0, "entry_atr": 0.0}
     cost_basis = 0.0
+    ind = indicator_series(candles)
+    bind = indicator_series(btc_candles) if btc_candles else None
     try:
         for k in range(210, len(candles) - 1):
-            window = candles[:k + 1]
-            price = window[-1]["c"]
-            closes = [c["c"] for c in window]
-            i = strategy.indicators(window, price, rsi(closes))
-            bi = strategy.indicators(btc_candles[:k + 1], btc_candles[k]["c"], rsi([c["c"] for c in btc_candles[:k + 1]])) if btc_candles else i
+            i = ind[k]
+            bi = (bind[k] if bind and k < len(bind) and bind[k] else i) if btc_candles else i
             d = strategy.evaluate("X", i, bi, pos)
             nxt = candles[k + 1]
             if pos["position_qty"] > 0:
@@ -243,19 +260,20 @@ def walk_forward_days(candles: list, btc_candles=None, train_days=20, validate_d
         if len(train) < 400 or len(test) < 300:
             continue
         sel = lambda part: [x for x in (btc_candles or []) if part[0]["t"] <= x["t"] <= part[-1]["t"]] or None  # noqa: E731
+        b_train, b_val, b_test = sel(train), sel(val), sel(test)
         best, best_s, train_pf = None, -math.inf, 0.0
         for params in parameter_sets(grid):
-            s = run_backtest(train, params, btc_candles=sel(train))
+            s = run_backtest(train, params, btc_candles=b_train)
             if s["trades"] and optimization_score(s) > best_s:
                 best, best_s, train_pf = params, optimization_score(s), s["profit_factor"]
         if best is None or train_pf < 1.10:
             skipped += 1
             continue
-        v = run_backtest(val, best, btc_candles=sel(val))
+        v = run_backtest(val, best, btc_candles=b_val)
         if v["trades"] and v["profit_factor"] < 1.0:
             skipped += 1
             continue
-        t = run_backtest(test, best, btc_candles=sel(test))
+        t = run_backtest(test, best, btc_candles=b_test)
         pnls = t["trade_pnls"]
         windows.append({"train": [_iso(meta["train"][0]), _iso(meta["train"][1])], "validate": [_iso(meta["validate"][0]), _iso(meta["validate"][1])],
                         "test": [_iso(meta["test"][0]), _iso(meta["test"][1])], "params": best, "train_pf": None if train_pf == float("inf") else round(train_pf, 3),
@@ -305,8 +323,10 @@ def monte_carlo_ruin(trade_pnls: list, simulations=5000, starting_equity=1000.0,
     q = lambda xs, p: xs[min(len(xs) - 1, int(p * (len(xs) - 1)))]  # noqa: E731
     por = ruins / simulations * 100
     dd95 = q(dds, 0.95)
+    exp = sum(trade_pnls) / n
+    checks = {"probability_of_ruin<5": por < 5, "drawdown_95<20": dd95 < 20, "expectancy>0": exp > 0}
     return {"simulations": simulations, "trades": n, "starting_equity": starting_equity, "probability_of_ruin": round(por, 2), "ruin_level": ruin_level,
             "drawdown_95": round(dd95, 2), "drawdown_median": round(q(dds, 0.5), 2), "worst_loss_streak": streaks[-1], "loss_streak_95": q(streaks, 0.95),
-            "equity_p05": round(q(finals, 0.05), 2), "equity_median": round(q(finals, 0.5), 2), "equity_p95": round(q(finals, 0.95), 2),
+            "equity_p05": round(q(finals, 0.05), 2), "equity_median": round(q(finals, 0.5), 2), "equity_p95": round(q(finals, 0.95), 2), "expectancy": round(exp, 4),
             "capital_required_for_dd95_at_20pct": round(starting_equity * dd95 / 20, 2) if dd95 else None,
-            "deployment": "APPROVED" if por < 5 and dd95 < 20 else "REJECTED", "checks": {"probability_of_ruin<5": por < 5, "drawdown_95<20": dd95 < 20}}
+            "deployment": "APPROVED" if all(checks.values()) else "REJECTED", "checks": checks}

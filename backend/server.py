@@ -225,7 +225,10 @@ async def _run_wf(uid: str, asset: str, days: int):
         cs = await loop.run_in_executor(None, lambda: lb.fetch_candles(asset, bars))
         btc = cs if asset == "BTC" else await loop.run_in_executor(None, lambda: lb.fetch_candles("BTC", bars))
         WF_JOBS[key].update(status="running", candles=len(cs), stage="walk-forward")
-        res = await loop.run_in_executor(None, lambda: lb.walk_forward_days(cs, btc, step_days=max(1, days // 10)))
+        days_avail = max(1, int((cs[-1]["t"] - cs[0]["t"]) / lb.DAY))
+        tr, va, te = (20, 5, 5) if days_avail >= 30 else (max(2, days_avail * 2 // 3), max(1, days_avail // 6), max(1, days_avail // 6))
+        res = await loop.run_in_executor(None, lambda: lb.walk_forward_days(cs, btc, tr, va, te, step_days=max(1, days_avail // 10)))
+        res["window_days"] = {"train": tr, "validate": va, "test": te, "available": days_avail}
         full = await loop.run_in_executor(None, lambda: lb.run_backtest(cs, res["windows"][-1]["params"] if res["windows"] else None, btc_candles=btc))
         mc = lb.monte_carlo_ruin(full["trade_pnls"], starting_equity=10000.0)
         doc = {"user_id": uid, "asset": asset, "days": days, "candles": len(cs), "ts": now_ms(), "walk_forward": res,

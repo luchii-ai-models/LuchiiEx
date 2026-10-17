@@ -50,8 +50,11 @@ def vote(i: dict, weights: dict | None = None) -> dict:
     final = round(sum(scores[a] * w[a] for a in AGENTS) / sum(w.values()))
     winner = max(AGENTS, key=lambda a: scores[a] * w[a])
     reg = i.get("regime", "CHOP")
-    allowed = final >= MIN_FINAL and winner in REGIME_ALLOWED.get(reg, set())
-    why = f"winner {winner} {scores[winner]} · final {final}" + ("" if final >= MIN_FINAL else f" < {MIN_FINAL}") + ("" if winner in REGIME_ALLOWED.get(reg, set()) else f" · {winner} not allowed in {reg}")
+    permitted = REGIME_ALLOWED.get(reg, set())
+    # The winner must be permitted in this regime, or a permitted agent must itself clear the bar (e.g. breakout agent in BREAKOUT).
+    regime_ok = winner in permitted or any(scores[a] >= MIN_FINAL for a in permitted)
+    allowed = final >= MIN_FINAL and regime_ok
+    why = f"winner {winner} {scores[winner]} · final {final}" + ("" if final >= MIN_FINAL else f" < {MIN_FINAL}") + ("" if regime_ok else f" · {winner} not allowed in {reg}")
     return {"scores": scores, "final": final, "winner": winner, "allowed": allowed, "reason": why}
 
 

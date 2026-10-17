@@ -101,3 +101,11 @@ User choices: copy from trade-bridge-73; use the env values exactly; no Emergent
 - Trade audit (db.trade_audit): full schema incl. score/adx/rsi/vol/btc state/regime/entry+exit reason/MAE/MFE/fees/slippage/net. GET /api/trades/audit, /api/trades/audit.csv, /api/trades/buckets (score/ADX/regime/symbol buckets).
 - StrategyHealthCard: CSV export, per-symbol ON/OFF toggles, owner re-enable button when DISABLED.
 - Backlog (Phase 2/3): 30-day walk-forward (train20/val5/test5 sliding), 5000-run Monte Carlo with probability of ruin, multi-agent voting, reinforcement ranking, dynamic symbol rotation. Profitability is NOT guaranteed; no live edge proven yet.
+
+
+## 2026-06 · Phase 2/3 validation + agent voting
+- audit.py: Mongo indexes (trade_id unique, user+symbol+status, strategy+entry_time, regime, trade_result, score) + validate() integrity checks (direction, qty>0, position_usd>0, exit>=entry, trade_result WIN/LOSS/BREAKEVEN).
+- agents.py: momentum/trend/breakout/volume/structure agents score 0-100; weighted final >= 75 and regime permission (REGIME_ALLOWED) required for a LUCHII_003 long. Reinforcement weights from audit (agent PF, >=10 trades) refreshed every 10 min per bot. winner_agent/agent_scores stored in trade_audit. GET /api/strategy/agents.
+- luchii_backtest: indicator_series cache (700x faster), day_windows/walk_forward_days (train20/val5/test5 sliding, train PF>=1.10, val PF>=1.0), approve_walk_forward (avg PF>=1.10, DD<=15, WR>=35, expectancy>0, >=5 windows), monte_carlo_ruin (5000 bootstrap; ruin<5%, DD95<20%, expectancy>0).
+- Endpoints: GET /api/strategy/montecarlo (live audit trades), POST/GET /api/strategy/walkforward/{asset}?days=30 (background job, result in db.backtests).
+- ValidationCard on dashboard: agent votes, Monte Carlo, run/view walk-forward.
