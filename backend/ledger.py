@@ -84,7 +84,7 @@ async def seed_system_accounts():
 
 async def provision_user(uid: str):
     for ccy in USER_CCY:
-        for kind, typ in (("WALLET", "LIABILITY"), ("PENDING", "LIABILITY")):
+        for kind, typ in (("WALLET", "LIABILITY"), ("PENDING", "LIABILITY"), ("TRADING", "LIABILITY")):
             code = f"USER_{uid}_{ccy}_{kind}"
             await db.ledger_accounts.update_one({"code": code}, {"$setOnInsert": {
                 "id": str(uuid.uuid4()), "code": code, "name": f"User {ccy} {kind.lower()}", "account_type": typ, "currency": ccy,
@@ -315,10 +315,12 @@ async def user_wallets(uid: str) -> list[dict]:
     for ccy in USER_CCY:
         w = await db.ledger_accounts.find_one({"code": user_code(uid, ccy)}, {"_id": 0})
         p = await db.ledger_accounts.find_one({"code": user_code(uid, ccy, "PENDING")}, {"_id": 0})
+        t = await db.ledger_accounts.find_one({"code": user_code(uid, ccy, "TRADING")}, {"_id": 0})
         if not w:
             continue
         a, pb = await balance(w["id"]), (await balance(p["id"]) if p else Decimal(0))
-        out.append({"id": w["id"], "currency": ccy, "available": float(a), "pending": float(pb), "total": float(a + pb)})
+        tb = await balance(t["id"]) if t else Decimal(0)
+        out.append({"id": w["id"], "currency": ccy, "available": float(a), "pending": float(pb), "trading": float(tb), "total": float(a + pb + tb)})
     return out
 
 

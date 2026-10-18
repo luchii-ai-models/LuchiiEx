@@ -48,10 +48,6 @@ async def capture(uid: str, order_id: str) -> dict:
     if cap["status"] != "COMPLETED":
         return {"status": cap["status"], "orderId": order_id}
     amt = cap["amount"]["value"]
-    je = await ledger.post_journal([{"account": "PAYPAL_CLEARING_USD", "debit": amt}, {"account": ledger.user_code(uid, "USD"), "credit": amt}],
-                                   source="PAYPAL", description=f"PayPal deposit ${amt}", reference_type="PAYPAL_DEPOSIT", reference_id=cap["id"],
-                                   idempotency_key=f"dep:PAYPAL:{cap['id']}", actor_id=uid)
-    await ledger.db.deposits.update_one({"provider_reference": cap["id"]}, {"$setOnInsert": {"id": je["id"], "user_id": uid, "provider": "PAYPAL",
-                                        "provider_reference": cap["id"], "amount": amt, "currency": "USD", "status": "SETTLED", "journal_entry_id": je["id"],
-                                        "created_at": ledger.now_ms()}}, upsert=True)
-    return {"status": "COMPLETED", "orderId": order_id, "amount": float(amt), "journalId": je["id"]}
+    import funding
+    out = await funding.settle_fiat_deposit(uid, "PAYPAL", cap["id"], amt)
+    return {"status": "COMPLETED", "orderId": order_id, "amount": float(amt), **out}

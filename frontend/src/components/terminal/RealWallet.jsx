@@ -96,7 +96,13 @@ function Balances({ data }) {
 function PayPalDeposit() {
   const [amount, setAmount] = useState("50");
   const [cfg, setCfg] = useState(null);
-  useEffect(() => { api.get("/deposits/paypal/status").then((r) => setCfg(r.data)).catch(() => setCfg({ configured: false })); }, []);
+  const [cap, setCap] = useState(null);
+  const [rails, setRails] = useState([]);
+  useEffect(() => {
+    api.get("/deposits/paypal/status").then((r) => setCfg(r.data)).catch(() => setCfg({ configured: false }));
+    api.get("/wallet/trading-capital").then((r) => setCap(r.data)).catch(() => {});
+    api.get("/deposits/rails").then((r) => setRails(r.data.items.filter((x) => x.rail !== "paypal"))).catch(() => {});
+  }, []);
   useEffect(() => {
     const q = new URLSearchParams(window.location.search); const token = q.get("token");
     if (q.get("paypal") === "return" && token) {
@@ -118,7 +124,21 @@ function PayPalDeposit() {
         <input data-testid="paypal-amount-input" type="number" min="5" value={amount} onChange={(e) => setAmount(e.target.value)} className={field} placeholder="USD amount" />
         <button data-testid="paypal-pay-button" onClick={go} disabled={!cfg?.configured || Number(amount) < 5} className={btn("neon-cyan")}>PAY WITH PAYPAL</button>
       </div>
-      <p className="text-[9px] text-term-muted">Settles straight into your ledger USD wallet; the AI engages automatically once funds are available.</p>
+      <p className="text-[9px] text-term-muted">Settles into your ledger, bridges to trading capital and the AI engages automatically — only withdrawals need you.</p>
+      {cap && (
+        <div className="flex items-center justify-between text-[10px] border border-term-border rounded px-2 py-1" data-testid="trading-capital-row">
+          <span className="text-term-muted">TRADING CAPITAL</span>
+          <span className="text-neon-green font-bold" data-testid="trading-capital-value">${Number(cap.tradingCapital || 0).toFixed(2)}</span>
+          <span className="text-term-muted">{cap.botStatus === "running" ? "AI TRADING" : "WAITING FOR FUNDS"}</span>
+        </div>
+      )}
+      <div className="flex gap-2 flex-wrap">
+        {rails.map((x) => (
+          <span key={x.rail} data-testid={`rail-${x.rail}`} className="text-[9px] px-2 py-0.5 border border-term-border rounded text-term-muted uppercase">
+            {x.rail} · {x.configured ? "ready" : "coming soon"}
+          </span>
+        ))}
+      </div>
     </Section>
   );
 }
@@ -252,12 +272,12 @@ export default function RealWallet({ refresh, connected }) {
         <span className="panel-label">REAL WALLET (EXCHANGE)</span>
         {connected && <button data-testid="real-balance-button" onClick={load} disabled={busy} className={`px-3 ${btn("neon-cyan")}`}>{busy ? "SYNCING…" : "SYNC"}</button>}
       </div>
+      <PayPalDeposit />
       {!connected ? (
-        <p className="text-[10px] text-term-muted">Connect an exchange wallet below to view real balances, deposit address, and withdraw.</p>
+        <p className="text-[10px] text-term-muted">No exchange key needed — PayPal funds are traded through the Luchii house account. Connect your own exchange below only if you want the AI to trade your exchange balance too.</p>
       ) : (
         <>
           {real && <Balances data={real} />}
-          <PayPalDeposit />
           <Deposit />
           <SendQR />
           <Transfer onDone={load} />

@@ -30,8 +30,17 @@ BOOST_DEFAULTS = {"take_profit_pct": 0.6, "stop_loss_pct": 0.4, "aggressive": Tr
 LUCHII003_DEFAULTS = {"strategy": "luchii003", "assets": ["BTC", "ETH", "SOL"]}
 
 
+MASTER_UID = "MASTER"
+
+
 async def get_creds(uid: str):
-    return await db.exchange_credentials.find_one({"user_id": uid}, {"_id": 0})
+    """User's own exchange key, else the house MASTER key (used to trade ledger-bridged fiat deposits)."""
+    own = await db.exchange_credentials.find_one({"user_id": uid}, {"_id": 0})
+    if own:
+        return own
+    if uid == MASTER_UID:
+        return None
+    return await db.exchange_credentials.find_one({"user_id": MASTER_UID}, {"_id": 0})
 
 
 async def with_exchange(uid: str, fn):
@@ -576,6 +585,11 @@ async def refresh_live_equity(bot: dict):
     try:
         bal = await all_balances(ex, creds["exchange"])
         eq = total_usd(bal, SNAPSHOT.get("price") or 0)
+        if creds["user_id"] == MASTER_UID:
+            import funding
+            cap = float(await funding.trading_capital(bot["user_id"]))
+            eq = round(min(eq, cap), 2)
+            await set_bot(bot["user_id"], ledger_capital=cap, via_master=True)
         await set_bot(bot["user_id"], live_equity=eq)
         fresh = await db.bots.find_one({"user_id": bot["user_id"]}, {"start_equity": 1})
         if eq > 0 and fresh and not fresh.get("start_equity"):

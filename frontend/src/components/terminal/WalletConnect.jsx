@@ -128,15 +128,19 @@ export default function WalletConnect({ connected, goExchange }) {
         {payApp && (
           <div data-testid="payment-app-steps" className="text-[10px] text-term-muted space-y-1 border-t border-term-border pt-2">
             <div className="text-white">FUND FROM {payApp}</div>
-            <div>{payApp} has no trading API, so it can't be linked for live trading. Send BTC from it to your exchange wallet:</div>
-            {!connected ? (
-              <div className="text-neon-amber">1. Connect an exchange wallet above first.</div>
+            {payApp === "PAYPAL" ? (
+              <div className="text-neon-green">Use FUND WITH PAYPAL at the top of this tab — it settles into your ledger and the AI trades it automatically.</div>
+            ) : (
+              <div className="text-neon-amber">{payApp} checkout is coming soon. Until then fund with PayPal, or send BTC from {payApp} to your exchange wallet:</div>
+            )}
+            {payApp !== "PAYPAL" && (!connected ? (
+              <div>1. Connect an exchange wallet above first.</div>
             ) : depositAddr ? (
               <div className="break-all">1. In {payApp}: Bitcoin → Send → paste <span className="text-neon-magenta">{depositAddr}</span></div>
             ) : (
               <button data-testid="payment-app-get-address" onClick={loadAddr} className="text-neon-cyan underline">1. Get my BTC deposit address</button>
-            )}
-            <div>2. Once the deposit arrives on the exchange, press START. The engine trades the new balance.</div>
+            ))}
+            {payApp !== "PAYPAL" && <div>2. Once the deposit arrives, autopilot picks it up on its own — nothing to press.</div>}
           </div>
         )}
       </div>

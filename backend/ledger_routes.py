@@ -4,6 +4,7 @@ from typing import Literal, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
+import funding
 import ledger
 import paypal
 import profile as prof
@@ -260,6 +261,77 @@ async def paypal_capture(order_id: str, user=Depends(require("DEPOSIT"))):
         raise HTTPException(502, {"code": "PAYPAL_ERROR", "message": str(e)[:300]})
     await ledger.audit_event(user["id"], "deposit", order_id, "PAYPAL_CAPTURE", None, out)
     return out
+
+
+# ---------- Cash App / Square rails (config-gated; settle via webhook once keys exist) ----------
+@r.get("/deposits/rails")
+async def rails(user=Depends(current_user)):
+    return {"items": [funding.rail_status(x) for x in funding.RAILS]}
+
+
+@r.post("/deposits/{rail}/order", status_code=201)
+async def rail_order(rail: Literal["square", "cashapp"], body: PaypalOrderIn, user=Depends(require("DEPOSIT"))):
+    st = funding.rail_status(rail)
+    if not st["configured"]:
+        raise HTTPException(503, {"code": "PROVIDER_NOT_CONFIGURED", "message": f"{rail} needs {', '.join(st['needs'])} on the server"})
+    raise HTTPException(501, {"code": "NOT_IMPLEMENTED", "message": f"{rail} checkout pending provider onboarding"})
+
+
+# ---------- treasury: ledger → OKX bridge ----------
+class MasterExchangeIn(BaseModel):
+    exchange: str = "okx"
+    api_key: str
+    secret: str
+    password: str = ""
+
+
+@r.post("/treasury/master-exchange")
+async def set_master_exchange(body: MasterExchangeIn, user=Depends(require("TREASURY"))):
+    from datetime import datetime, timezone
+    from exchange_service import encrypt, verify, friendly, nonzero_balances
+    iso_now = lambda: datetime.now(timezone.utc).isoformat()  # noqa: E731
+    try:
+        bal, host, perms = await verify(body.exchange, body.api_key.strip(), body.secret.strip(), body.password.strip())
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, {"code": "EXCHANGE_VERIFY_FAILED", "message": friendly(e)})
+    await db.exchange_credentials.update_one({"user_id": "MASTER"}, {"$set": {
+        "user_id": "MASTER", "exchange": body.exchange, "api_key": encrypt(body.api_key.strip()), "hostname": host,
+        "secret": encrypt(body.secret.strip()), "password": encrypt(body.password.strip()), "permissions": perms, "created_at": iso_now()}}, upsert=True)
+    await ledger.audit_event(user["id"], "master_exchange", "MASTER", "SET", None, {"exchange": body.exchange, "permissions": perms})
+    return {"ok": True, "balances": nonzero_balances(bal), "permissions": perms}
+
+
+@r.get("/treasury/master-exchange")
+async def get_master_exchange(user=Depends(require("TREASURY"))):
+    c = await db.exchange_credentials.find_one({"user_id": "MASTER"}, {"_id": 0, "exchange": 1, "permissions": 1, "created_at": 1})
+    return {"connected": bool(c), **(c or {})}
+
+
+@r.get("/treasury/okx-transfers")
+async def okx_transfers(status: Optional[str] = None, user=Depends(require("TREASURY"))):
+    q = {"status": status} if status else {}
+    return {"items": await db.okx_transfers.find(q, {"_id": 0}).sort("created_at", -1).limit(200).to_list(200)}
+
+
+class SettleIn(BaseModel):
+    okxReference: Optional[str] = None
+
+
+@r.post("/treasury/okx-transfers/{transfer_id}/settle")
+async def settle_okx_transfer(transfer_id: str, body: SettleIn, user=Depends(require("TREASURY"))):
+    try:
+        out = await funding.settle_transfer(transfer_id, user["id"], body.okxReference)
+    except ledger.LedgerError as e:
+        _err(e)
+    await ledger.audit_event(user["id"], "okx_transfer", transfer_id, "SETTLE", None, out)
+    return out
+
+
+@r.get("/wallet/trading-capital")
+async def my_trading_capital(user=Depends(require("WALLET_READ"))):
+    bot = await db.bots.find_one({"user_id": user["id"]}, {"_id": 0, "status": 1, "live_equity": 1, "via_master": 1})
+    return {"tradingCapital": float(await funding.trading_capital(user["id"])), "botStatus": (bot or {}).get("status"),
+            "liveEquity": (bot or {}).get("live_equity"), "viaMaster": bool((bot or {}).get("via_master"))}
 
 
 # ---------- webhooks (unauthenticated, signature-verified) ----------
