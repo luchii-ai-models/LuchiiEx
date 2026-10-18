@@ -137,3 +137,7 @@ User choices: copy from trade-bridge-73; use the env values exactly; no Emergent
 ## 2026-10-18 · Text removals + wallet QR
 - Removed: header "COINBASE FEED · LUCHII ENGINE", ORDER BOOK "COINBASE", LOG "LUCHII ENGINE", login email placeholder.
 - RealWallet.jsx: `AddrQR` component (qrcode.react). DEPOSIT QR + new SEND QR encode the address fetched live from the connected exchange API (bitcoin:/ethereum: URI, optional amount). WITHDRAW shows a verify-destination QR once an address is typed. TRANSFER is internal (no address) — note added. Sections render only when an exchange is linked.
+
+## 2026-10-18 · Wallet QR polish
+- AddrQR stacks vertically on <640px; wallet form grids collapse to one column on phones.
+- SAVE PNG (512px canvas export) and SHARE (Web Share API with file; falls back to copying the address) buttons on every QR block. Verified at 390px with a real download.

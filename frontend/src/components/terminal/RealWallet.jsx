@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowDownToLine, ArrowUpFromLine, ArrowLeftRight, History, QrCode, Send } from "lucide-react";
+import { ArrowDownToLine, ArrowUpFromLine, ArrowLeftRight, History, QrCode, Send, Download, Share2 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { toast } from "sonner";
 import api, { formatApiErrorDetail } from "../../lib/api";
@@ -18,15 +18,38 @@ function payUri(coin, address, amount) {
 }
 
 export function AddrQR({ value, label, testid, verified }) {
+  const [el, setEl] = useState(null);
   if (!value) return null;
+  const toPng = () => new Promise((res) => {
+    const svg = el?.querySelector("svg"); if (!svg) return res(null);
+    const img = new Image(); const c = document.createElement("canvas"); c.width = c.height = 512;
+    img.onload = () => { const x = c.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0, 0, 512, 512); x.drawImage(img, 32, 32, 448, 448); c.toBlob(res, "image/png"); };
+    img.src = "data:image/svg+xml;base64," + btoa(new XMLSerializer().serializeToString(svg));
+  });
+  const fname = `luchii-${label.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.png`;
+  const download = async () => {
+    const blob = await toPng(); if (!blob) return;
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = fname; a.click(); URL.revokeObjectURL(a.href);
+    toast.success("QR saved");
+  };
+  const share = async () => {
+    const blob = await toPng(); if (!blob) return;
+    const file = new File([blob], fname, { type: "image/png" });
+    if (navigator.canShare?.({ files: [file] })) { try { await navigator.share({ files: [file], title: label, text: value }); } catch { /* cancelled */ } }
+    else { await navigator.clipboard?.writeText(value); toast("Sharing not supported here · address copied instead"); }
+  };
   return (
-    <div className="flex items-start gap-3 border border-term-border p-2" data-testid={testid}>
-      <div className="bg-white p-1.5 shrink-0"><QRCodeSVG value={value} size={110} level="M" /></div>
-      <div className="text-[9px] text-term-muted leading-relaxed min-w-0">
-        <div className="flex items-center gap-1 text-white tracking-[0.12em]"><QrCode size={10} /> {label}</div>
+    <div className="flex flex-col sm:flex-row items-center sm:items-start gap-3 border border-term-border p-2" data-testid={testid}>
+      <div ref={setEl} className="bg-white p-1.5 shrink-0"><QRCodeSVG value={value} size={110} level="M" /></div>
+      <div className="text-[9px] text-term-muted leading-relaxed min-w-0 w-full text-center sm:text-left">
+        <div className="flex items-center justify-center sm:justify-start gap-1 text-white tracking-[0.12em]"><QrCode size={10} /> {label}</div>
         {verified && <div className="text-neon-green mt-1">✓ OFFICIAL · fetched live from your exchange API, not typed by hand</div>}
         <div className="break-all mt-1 text-neon-cyan">{value}</div>
         <div className="mt-1">Scan with your wallet app, then compare the first and last 6 characters on screen before confirming.</div>
+        <div className="flex justify-center sm:justify-start gap-2 mt-2">
+          <button type="button" data-testid={`${testid}-download`} onClick={download} className={`px-3 ${btn("neon-cyan")}`}><Download size={10} className="inline mr-1" />SAVE PNG</button>
+          <button type="button" data-testid={`${testid}-share`} onClick={share} className={`px-3 ${btn("neon-magenta")}`}><Share2 size={10} className="inline mr-1" />SHARE</button>
+        </div>
       </div>
     </div>
   );
@@ -81,7 +104,7 @@ function Deposit() {
   };
   return (
     <Section icon={ArrowDownToLine} title="DEPOSIT">
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
         <Select testid="deposit-coin-select" value={coin} onChange={(v) => { setCoin(v); setNet(""); setAddr(null); }} options={COINS.map((c) => [c, c])} />
         <Select testid="deposit-network-select" value={net} onChange={setNet} options={[["", "default network"], ...nets.filter((n) => n.deposit).map((n) => [n.id, n.id])]} />
         <button data-testid="real-address-button" onClick={load} className={btn("neon-magenta")}>GET ADDRESS</button>
@@ -109,7 +132,7 @@ function SendQR() {
   };
   return (
     <Section icon={Send} title="SEND · FROM ANY WALLET APP TO YOUR EXCHANGE">
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
         <Select testid="send-coin-select" value={coin} onChange={(v) => { setCoin(v); setAddr(null); }} options={COINS.map((c) => [c, c])} />
         <input data-testid="send-amount-input" type="number" placeholder="amount (optional)" value={amount} onChange={(e) => setAmount(e.target.value)} className={field} />
         <button data-testid="send-qr-button" onClick={load} className={btn("neon-cyan")}>SHOW SEND QR</button>
@@ -128,7 +151,7 @@ function Transfer({ onDone }) {
   };
   return (
     <Section icon={ArrowLeftRight} title="TRANSFER · FUNDING ⇄ TRADING">
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
         <Select testid="transfer-coin-select" value={t.currency} onChange={(v) => setT({ ...t, currency: v })} options={COINS.map((c) => [c, c])} />
         <Select testid="transfer-direction-select" value={t.direction} onChange={(v) => setT({ ...t, direction: v })} options={[["to_trading", "funding → trading"], ["to_funding", "trading → funding"]]} />
         <input data-testid="transfer-amount-input" type="number" placeholder="amount" value={t.amount} onChange={(e) => setT({ ...t, amount: e.target.value })} className={field} />
@@ -151,7 +174,7 @@ function Withdraw({ onDone }) {
   };
   return (
     <Section icon={ArrowUpFromLine} title="WITHDRAW">
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <Select testid="withdraw-coin-select" value={wd.currency} onChange={(v) => setWd({ ...wd, currency: v, network: "" })} options={COINS.map((c) => [c, c])} />
         <Select testid="withdraw-network-select" value={wd.network} onChange={(v) => setWd({ ...wd, network: v })} options={[["", "default network"], ...nets.filter((n) => n.withdraw).map((n) => [n.id, `${n.id}${n.fee != null ? ` · fee ${n.fee}` : ""}`])]} />
       </div>
