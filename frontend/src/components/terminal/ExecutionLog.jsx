@@ -59,7 +59,6 @@ export default function ExecutionLog({ logs }) {
       <div className="px-2 py-1.5 border-b border-term-border flex items-center justify-between">
         <span className="panel-label">◈ LOG<span className="animate-blink text-neon-magenta">▊</span></span>
         <div className="flex items-center gap-2">
-          <span className="panel-label text-[8px]">LUCHII ENGINE</span>
           <button data-testid="open-full-log" onClick={() => setOpen(true)} title="Full-screen 24h log"
             className="text-term-muted hover:text-neon-magenta transition-colors"><Maximize2 size={12} /></button>
         </div>

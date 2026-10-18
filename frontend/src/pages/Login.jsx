@@ -54,7 +54,7 @@ export default function Login() {
             {mode === "register" && (
               <Field label="CALLSIGN" value={name} onChange={setName} placeholder="operator_01" testid="register-name-input" />
             )}
-            <Field label="EMAIL" type="email" value={email} onChange={setEmail} placeholder="operator@frasberg.io" required testid="login-email-input" />
+            <Field label="EMAIL" type="email" value={email} onChange={setEmail} required testid="login-email-input" />
             <Field label="PASSWORD" type="password" value={password} onChange={setPassword} placeholder="••••••••" required testid="login-password-input" />
 
             {error && <div data-testid="login-error" className="text-neon-red text-xs border border-neon-red/40 bg-neon-red/5 px-3 py-2">{error}</div>}

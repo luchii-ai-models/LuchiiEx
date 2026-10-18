@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Settings, LogOut, Activity, Download } from "lucide-react";
+import { Settings, LogOut, Download } from "lucide-react";
 import { toast } from "sonner";
 import { useInstallPrompt } from "../../hooks/useInstallPrompt";
 import Logo from "./Logo";
@@ -41,7 +41,6 @@ export default function Header({ bot, snapshot, user, onSettings, onLogout }) {
           <div className="text-xs sm:text-sm font-extrabold tracking-tighter flex items-center gap-1.5 sm:gap-2 flex-wrap">
             <span className="truncate text-base sm:text-lg">LUCHII <span className="text-white">EX</span></span>
           </div>
-          <div className="panel-label mt-1 hidden sm:flex items-center gap-1"><Activity size={9} /> COINBASE FEED · LUCHII ENGINE</div>
         </div>
       </div>
 

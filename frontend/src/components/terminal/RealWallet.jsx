@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { ArrowDownToLine, ArrowUpFromLine, ArrowLeftRight, History } from "lucide-react";
+import { ArrowDownToLine, ArrowUpFromLine, ArrowLeftRight, History, QrCode, Send } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import { toast } from "sonner";
 import api, { formatApiErrorDetail } from "../../lib/api";
 
@@ -7,6 +8,29 @@ const err = (e) => toast.error(formatApiErrorDetail(e.response?.data?.detail));
 const field = "w-full bg-transparent border-b border-neon-magenta/60 focus:border-neon-magenta outline-none py-2 text-white text-sm";
 const btn = (c) => `border border-${c} text-${c} hover:bg-${c} hover:text-black transition-colors py-2 text-[10px] tracking-[0.12em] disabled:opacity-30`;
 const COINS = ["BTC", "USDT", "USDC", "ETH"];
+
+// Payment URI so wallet apps pre-fill coin/address/amount when scanned.
+function payUri(coin, address, amount) {
+  if (!address) return "";
+  if (coin === "BTC") return `bitcoin:${address}${amount ? `?amount=${amount}` : ""}`;
+  if (coin === "ETH") return `ethereum:${address}${amount ? `?value=${Math.round(Number(amount) * 1e18)}` : ""}`;
+  return address;
+}
+
+export function AddrQR({ value, label, testid, verified }) {
+  if (!value) return null;
+  return (
+    <div className="flex items-start gap-3 border border-term-border p-2" data-testid={testid}>
+      <div className="bg-white p-1.5 shrink-0"><QRCodeSVG value={value} size={110} level="M" /></div>
+      <div className="text-[9px] text-term-muted leading-relaxed min-w-0">
+        <div className="flex items-center gap-1 text-white tracking-[0.12em]"><QrCode size={10} /> {label}</div>
+        {verified && <div className="text-neon-green mt-1">✓ OFFICIAL · fetched live from your exchange API, not typed by hand</div>}
+        <div className="break-all mt-1 text-neon-cyan">{value}</div>
+        <div className="mt-1">Scan with your wallet app, then compare the first and last 6 characters on screen before confirming.</div>
+      </div>
+    </div>
+  );
+}
 
 function Section({ icon: Icon, title, children }) {
   return (
@@ -70,6 +94,28 @@ function Deposit() {
           <button onClick={() => { navigator.clipboard?.writeText(addr.address); toast.success("Address copied"); }} className="block mt-1 text-neon-cyan underline">copy</button>
         </div>
       )}
+      {addr && <AddrQR testid="deposit-qr" verified label={`DEPOSIT ${addr.currency}${addr.network ? ` · ${addr.network}` : ""}`} value={payUri(addr.currency, addr.address)} />}
+    </Section>
+  );
+}
+
+function SendQR() {
+  const [coin, setCoin] = useState("BTC");
+  const [amount, setAmount] = useState("");
+  const [addr, setAddr] = useState(null);
+  const load = async () => {
+    try { const { data } = await api.get(`/wallet/real/deposit-address?currency=${coin}${coin === "ETH" ? "&network=ERC20" : ""}`); setAddr(data); }
+    catch (e) { err(e); }
+  };
+  return (
+    <Section icon={Send} title="SEND · FROM ANY WALLET APP TO YOUR EXCHANGE">
+      <div className="grid grid-cols-3 gap-2">
+        <Select testid="send-coin-select" value={coin} onChange={(v) => { setCoin(v); setAddr(null); }} options={COINS.map((c) => [c, c])} />
+        <input data-testid="send-amount-input" type="number" placeholder="amount (optional)" value={amount} onChange={(e) => setAmount(e.target.value)} className={field} />
+        <button data-testid="send-qr-button" onClick={load} className={btn("neon-cyan")}>SHOW SEND QR</button>
+      </div>
+      {addr && <AddrQR testid="send-qr" verified label={`SEND ${amount ? `${amount} ` : ""}${coin} → EXCHANGE`} value={payUri(coin, addr.address, amount)} />}
+      <p className="text-[9px] text-term-muted">Scan from Phantom, MetaMask, Trust, Coinbase Wallet, etc. The QR encodes your exchange's own deposit address{amount ? " and the amount" : ""}.</p>
     </Section>
   );
 }
@@ -88,7 +134,7 @@ function Transfer({ onDone }) {
         <input data-testid="transfer-amount-input" type="number" placeholder="amount" value={t.amount} onChange={(e) => setT({ ...t, amount: e.target.value })} className={field} />
       </div>
       <button data-testid="transfer-button" onClick={go} disabled={!t.amount} className={`w-full ${btn("neon-cyan")}`}>TRANSFER</button>
-      <p className="text-[9px] text-term-muted">Deposits land in the funding account on OKX and similar exchanges. Move them to trading so the bot can use them.</p>
+      <p className="text-[9px] text-term-muted">Deposits land in the funding account on OKX and similar exchanges. Move them to trading so the bot can use them. Internal move — no address or QR is involved, nothing leaves the exchange.</p>
     </Section>
   );
 }
@@ -112,6 +158,7 @@ function Withdraw({ onDone }) {
       <input data-testid="withdraw-amount-input" type="number" placeholder={`amount ${wd.currency}${sel?.min ? ` (min ${sel.min})` : ""}`} value={wd.amount} onChange={(e) => setWd({ ...wd, amount: e.target.value })} className={field} />
       <input data-testid="withdraw-address-input" placeholder="destination address" value={wd.address} onChange={(e) => setWd({ ...wd, address: e.target.value })} className={field} />
       <input data-testid="withdraw-tag-input" placeholder="memo / tag (optional)" value={wd.tag} onChange={(e) => setWd({ ...wd, tag: e.target.value })} className={field} />
+      {wd.address.length >= 20 && <AddrQR testid="withdraw-qr" label={`VERIFY DESTINATION · ${wd.currency}${wd.network ? ` · ${wd.network}` : ""}`} value={payUri(wd.currency, wd.address.trim(), wd.amount)} />}
       <button data-testid="real-withdraw-button" onClick={go} disabled={!wd.amount || !wd.address} className={`w-full ${btn("neon-red")}`}>⚠ WITHDRAW REAL {wd.currency}</button>
       <p className="text-[9px] text-term-muted">Needs a Withdraw-enabled key. OKX withdraws from the funding account and only to addresses on your OKX withdrawal allowlist.</p>
     </Section>
@@ -158,6 +205,7 @@ export default function RealWallet({ refresh, connected }) {
         <>
           {real && <Balances data={real} />}
           <Deposit />
+          <SendQR />
           <Transfer onDone={load} />
           <Withdraw onDone={load} />
           <Section icon={History} title="HISTORY"><HistoryList rows={hist} /></Section>

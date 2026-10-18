@@ -133,3 +133,7 @@ User choices: copy from trade-bridge-73; use the env values exactly; no Emergent
 - ORDER BOOK and ANALYTICS are now Collapsible drop-down tabs.
 - Footer: single "© 2026, Frasberg, Inc." link to /info/capabilities (login + dashboard).
 - Verified via screenshots (desktop, no overflow, no console errors). No trading logic changed; no profit guarantee implied.
+
+## 2026-10-18 · Text removals + wallet QR
+- Removed: header "COINBASE FEED · LUCHII ENGINE", ORDER BOOK "COINBASE", LOG "LUCHII ENGINE", login email placeholder.
+- RealWallet.jsx: `AddrQR` component (qrcode.react). DEPOSIT QR + new SEND QR encode the address fetched live from the connected exchange API (bitcoin:/ethereum: URI, optional amount). WITHDRAW shows a verify-destination QR once an address is typed. TRANSFER is internal (no address) — note added. Sections render only when an exchange is linked.

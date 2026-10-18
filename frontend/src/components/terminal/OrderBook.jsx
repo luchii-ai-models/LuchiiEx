@@ -23,7 +23,6 @@ export default function OrderBook({ snapshot }) {
     <div className="panel p-0 shrink-0">
       <div className="px-2 py-1.5 border-b border-term-border flex items-center justify-between">
         <span className="panel-label">◈ ORDER BOOK</span>
-        <span className="panel-label text-[8px]">COINBASE</span>
       </div>
       <div className="flex flex-col-reverse">
         {asks.map((a, i) => <Row key={`a${i}`} o={a} side="ask" />)}
