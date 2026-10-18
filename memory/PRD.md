@@ -180,3 +180,6 @@ User choices: copy from trade-bridge-73; use the env values exactly; no Emergent
 - engine.reconcile(bot): every 60s per running live bot → sync_position against exchange balances + cancel open orders >5 min that are not protective stop/TP legs.
 - strategy exits: tiers now R-multiples (1R = 1.5×ATR stop distance): 25% at +1R, 25% at +2R, remaining 50% trails 2.5×ATR (update_stop runner=True).
 - User reported 4 ETH losses (-$0.12, 0% win) — all pre-guard trades in CHOP; guard now blocks them.
+
+## 2026-10-18 · Scoreboard reset
+- Luchii_002 pre-guard records (4 closed ETH losses, 8 fills, pnl series, gates) moved to *_archive collections with archived_reason=pre_guard_reset; bot counters zeroed, start_ts reset. audit_log event scoreboard_reset. Leaderboard all $0.00.
