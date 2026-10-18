@@ -156,6 +156,28 @@ def mtf_trend(candles: list) -> dict:
     return out
 
 
+GUARD = {"adx_min": 25, "vol_min": 1.5, "conf_min": 0.80, "score_min": 80, "rsi_min": 55}
+
+
+def production_guard(i: dict, bi: dict, asset: str, score: float | None = None) -> list[str]:
+    """Pure market-state checks shared by live engine and backtest runner. Returns failed-check messages."""
+    if nan(i.get("adx"), i.get("rsi"), i.get("volume_ratio"), i.get("ema9"), i.get("ema21"), i.get("vwap"), i.get("atr"), i.get("atr_ma"), bi.get("ema200"), bi.get("rsi"), bi.get("trend_pct")):
+        return ["indicators warming up"]
+    score = score if score is not None else entry_score(i)[0]
+    conf = confidence(i, bi)
+    mtf = i.get("mtf") or {}
+    g = GUARD
+    checks = [(i.get("regime") != "CHOP", "CHOP regime"), (i["adx"] >= g["adx_min"], f"ADX {i['adx']:.0f} < {g['adx_min']}"),
+              (i["ema9"] > i["ema21"], "EMA9 ≤ EMA21"), (i["price"] > i["vwap"], "price below VWAP"),
+              (g["rsi_min"] < i["rsi"] < 70, f"RSI {i['rsi']:.0f} outside {g['rsi_min']}-70"),
+              (i["volume_ratio"] >= g["vol_min"], f"volume {i['volume_ratio']:.2f}x < {g['vol_min']}"), (i["atr"] > i["atr_ma"], "ATR not expanding"),
+              (all(mtf.get(tf) for tf in ("1m", "5m", "15m")), "5m/15m trend not aligned"),
+              (score >= g["score_min"], f"score {score} < {g['score_min']}"), (conf >= g["conf_min"], f"confidence {conf * 100:.0f}% < {g['conf_min'] * 100:.0f}%")]
+    if asset != "BTC":
+        checks += [(bi["price"] > bi["ema200"], "BTC below EMA200"), (bi["rsi"] > 45, f"BTC RSI {bi['rsi']:.0f} ≤ 45"), (bi["trend_pct"] > 0, "BTC trend negative")]
+    return [msg for ok, msg in checks if not ok]
+
+
 def indicators(candles: list, price: float, rsi: float) -> dict:
     closes = [c["c"] for c in candles]
     vols = [c["v"] for c in candles]

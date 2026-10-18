@@ -19,6 +19,7 @@ import brokers  # noqa: E402
 import engine  # noqa: E402
 import ledger  # noqa: E402
 import ledger_routes  # noqa: E402
+import research_routes  # noqa: E402
 import market  # noqa: E402
 import pocket  # noqa: E402
 import solana_dex  # noqa: E402
@@ -1043,6 +1044,7 @@ async def root():
 app.include_router(api)
 api.include_router(ledger_routes.r)
 app.include_router(ledger_routes.r, prefix="/api")
+app.include_router(research_routes.r, prefix="/api")
 app.add_middleware(CORSMiddleware, allow_origins=os.environ["CORS_ORIGINS"].split(","), allow_credentials=False,
                    allow_methods=["*"], allow_headers=["*"])
 
@@ -1055,6 +1057,8 @@ async def startup():
     async for u in db.users.find({}, {"_id": 1}):
         await ledger.provision_user(str(u["_id"]))
     asyncio.create_task(webhooks.worker())
+    import predict
+    asyncio.create_task(predict.worker())
     await db.bots.create_index("user_id", unique=True)
     await db.bot_logs.create_index([("user_id", 1), ("ts", -1)])
     await db.bot_trades.create_index([("user_id", 1), ("ts", -1)])

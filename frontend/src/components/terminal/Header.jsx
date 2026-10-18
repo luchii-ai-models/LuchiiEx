@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Settings, LogOut, Download } from "lucide-react";
+import { Settings, LogOut, Download, ShieldCheck } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { useInstallPrompt } from "../../hooks/useInstallPrompt";
 import Logo from "./Logo";
@@ -14,6 +15,7 @@ function Stat({ label, value, cls = "text-white" }) {
 }
 
 export default function Header({ bot, snapshot, user, onSettings, onLogout }) {
+  const nav = useNavigate();
   const [clock, setClock] = useState("");
   const { canInstall, installed, install, isIOS } = useInstallPrompt();
 
@@ -54,6 +56,8 @@ export default function Header({ bot, snapshot, user, onSettings, onLogout }) {
           <button data-testid="install-app-button" onClick={handleInstall} title="Install app"
             className="text-neon-cyan hover:text-glow-cyan transition-colors"><Download size={16} /></button>
         )}
+        <button data-testid="open-risk-button" onClick={() => nav("/risk")} title="Risk & promotion pipeline"
+          className="text-term-muted hover:text-neon-green transition-colors"><ShieldCheck size={16} /></button>
         <button data-testid="open-settings-button" onClick={onSettings}
           className="text-term-muted hover:text-neon-magenta transition-colors"><Settings size={16} /></button>
         <button data-testid="logout-button" onClick={onLogout}

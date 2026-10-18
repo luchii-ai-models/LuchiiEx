@@ -30,9 +30,10 @@ SYSTEM_ACCOUNTS = [
 
 
 class LedgerError(ValueError):
-    def __init__(self, msg: str, status: int = 400):
+    def __init__(self, msg: str, status: int = 400, code: str = "LEDGER_ERROR"):
         super().__init__(msg)
         self.status = status
+        self.code = code
 
 
 def _req_hash(lines) -> str:

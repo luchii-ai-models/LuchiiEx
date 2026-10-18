@@ -141,20 +141,8 @@ def entry_guard(bot: dict, asset: str, d: dict):
     cd = loss_cooldown(bot)
     if cd:
         return cd
-    score = d.get("score") if d.get("score") is not None else strategy.entry_score(i)[0]
-    conf = strategy.confidence(i, bi)
-    d["confidence"] = conf
-    mtf = i.get("mtf") or {}
-    g = GUARD
-    checks = [(i.get("regime") != "CHOP", "CHOP regime"), (i["adx"] >= g["adx_min"], f"ADX {i['adx']:.0f} < {g['adx_min']}"),
-              (i["ema9"] > i["ema21"], "EMA9 ≤ EMA21"), (i["price"] > i["vwap"], "price below VWAP"),
-              (g["rsi_min"] < i["rsi"] < 70, f"RSI {i['rsi']:.0f} outside {g['rsi_min']}-70"),
-              (i["volume_ratio"] >= g["vol_min"], f"volume {i['volume_ratio']:.2f}x < {g['vol_min']}"), (i["atr"] > i["atr_ma"], "ATR not expanding"),
-              (all(mtf.get(tf) for tf in ("1m", "5m", "15m")), "5m/15m trend not aligned"),
-              (score >= g["score_min"], f"score {score} < {g['score_min']}"), (conf >= g["conf_min"], f"confidence {conf * 100:.0f}% < {g['conf_min'] * 100:.0f}%")]
-    if asset != "BTC":
-        checks += [(bi["price"] > bi["ema200"], "BTC below EMA200"), (bi["rsi"] > 45, f"BTC RSI {bi['rsi']:.0f} ≤ 45"), (bi["trend_pct"] > 0, "BTC trend negative")]
-    failed = [msg for ok, msg in checks if not ok]
+    d["confidence"] = strategy.confidence(i, bi)
+    failed = strategy.production_guard(i, bi, asset, d.get("score"))
     return " · ".join(failed) if failed else None
 
 
@@ -758,6 +746,11 @@ async def entry_blocked(uid: str, bot: dict, asset: str, d: dict, gate_only: boo
     ok, g = await gates.allows_entry(uid, bot.get("strategy", "luchii003"))
     if gate_only:
         return None, g
+    if bot.get("mode") == "live":
+        from research import registry
+        promoted, why = await registry.is_promoted("luchii003", asset)
+        if not promoted:
+            return f"[{asset}] PROMOTION GATE · live entries blocked · {why} · run Risk → Validate to promote", g
     if not ok:
         return f"{d['reason']} · ENTRY BLOCKED · strategy gate {g['state']} ({g['reason']}) · exits still managed", g
     ks = await gates.kill_switch(uid)

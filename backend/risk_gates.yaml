@@ -1,0 +1,31 @@
+version: 1
+backtest:
+  minimum_sharpe: 1.0
+  minimum_sortino: 1.25
+  minimum_profit_factor: 1.2
+  minimum_win_rate: 0.45
+  minimum_expectancy: 0
+  minimum_alpha: 0
+  minimum_trades: 20
+risk:
+  maximum_drawdown: 25
+  maximum_daily_drawdown: 10
+  maximum_leverage: 3
+  maximum_position_weight: 50
+stress:
+  minimum_survival_rate: 0.95
+  btc_crash_10_max_loss: 20
+  btc_crash_20_max_loss: 40
+  btc_crash_40_max_loss: 60
+monte_carlo:
+  iterations: 1000
+  minimum_median_return: 0
+  maximum_ruin_probability: 0.05
+  minimum_survival_rate: 0.95
+execution:
+  maximum_slippage_bps: 50
+  minimum_fill_ratio: 0.90
+rollback:
+  maximum_drawdown: 30
+  minimum_sharpe: 0.5
+  minimum_survival_rate: 0.90

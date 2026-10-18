@@ -183,3 +183,10 @@ User choices: copy from trade-bridge-73; use the env values exactly; no Emergent
 
 ## 2026-10-18 · Scoreboard reset
 - Luchii_002 pre-guard records (4 closed ETH losses, 8 fills, pnl series, gates) moved to *_archive collections with archived_reason=pre_guard_reset; bot counters zeroed, start_ts reset. audit_log event scoreboard_reset. Leaderboard all $0.00.
+
+## 2026-10-18 · Research/promotion pipeline + Predict
+- backend/research/: events (EventStore, seq/gap/conflict validation, HMAC-signed versioned snapshots w/ key ids + migrations), portfolio (Decimal multi-asset long/short ledger + idempotent projector), execution (depth-walking FillEngine, fees, slippage, partial fills), metrics (Sharpe/Sortino/DD/PF/expectancy, alpha/beta/IR benchmarks, seeded Monte Carlo), stress (BTC −10/−20/−40, liquidity shock, correlated selloff, health score), gates (risk_gates.yaml via pydantic, PromotionEngine, RollbackMonitor), runner (BacktestRunner v2 on real LUCHII_003 + production_guard), registry (Mongo promotions, idempotent rollback). 13 pytest tests pass (tests/test_research.py).
+- API /api/research/{gates,run/{asset},status,latest,rollback,live-risk}. LIVE PROMOTION GATE: engine.entry_blocked refuses live entries unless latest run for (luchii003, asset) is PROMOTE and not rolled back.
+- strategy.production_guard() shared by live engine and backtest (same 13 checks).
+- Risk page /risk (header shield icon) replaces the Streamlit dashboard (single-ingress env). First honest result ETH 7d: REJECT (18 trades, PF 0.18, Sharpe −0.7; guard blocked 49 entries). Live trading stays blocked until a PROMOTE.
+- Luchii Predict (backend/predict.py, Settings → PREDICT): UP/DOWN 3s–5m, stake $1–100, payout 1.80–2.10x by AI confidence, escrow/house ledger accounts, 1s settlement worker, idempotent place/settle, liability cap $2000. Gated by PREDICT_ENABLED (currently false) — regulatory. Verified WON/LOST/escrow accounting.

@@ -10,6 +10,7 @@ import Logo from "./components/terminal/Logo";
 import Dashboard from "./pages/Dashboard";
 import Company from "./pages/Company";
 import HelpCenter from "./pages/HelpCenter";
+import RiskPage from "./pages/RiskPage";
 import InfoPage from "./pages/InfoPage";
 import SplashScreen from "./components/terminal/SplashScreen";
 
@@ -60,6 +61,7 @@ function App() {
               <Route path="/" element={<Protected><Dashboard /></Protected>} />
               <Route path="/company" element={<Protected><Company /></Protected>} />
               <Route path="/help" element={<Protected><HelpCenter /></Protected>} />
+              <Route path="/risk" element={<Protected><RiskPage /></Protected>} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </BrowserRouter>

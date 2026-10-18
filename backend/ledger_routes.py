@@ -37,7 +37,7 @@ def _page(page: int, size: int):
 
 
 def _err(e: Exception, code="LEDGER_ERROR", status=None):
-    raise HTTPException(status or getattr(e, "status", 400), {"code": code, "message": str(e)})
+    raise HTTPException(status or getattr(e, "status", 400), {"code": getattr(e, "code", None) or code, "message": str(e)})
 
 
 # ---------- profile / settings / kyc ----------
@@ -332,6 +332,41 @@ async def my_trading_capital(user=Depends(require("WALLET_READ"))):
     bot = await db.bots.find_one({"user_id": user["id"]}, {"_id": 0, "status": 1, "live_equity": 1, "via_master": 1})
     return {"tradingCapital": float(await funding.trading_capital(user["id"])), "botStatus": (bot or {}).get("status"),
             "liveEquity": (bot or {}).get("live_equity"), "viaMaster": bool((bot or {}).get("via_master"))}
+
+
+# ---------- Luchii Predict (fixed-payout contracts, PREDICT_ENABLED-gated) ----------
+import predict  # noqa: E402
+
+
+class PredictIn(BaseModel):
+    asset: Literal["BTC", "ETH", "SOL"]
+    direction: Literal["UP", "DOWN"]
+    stake: float
+    duration: int
+    idempotencyKey: Optional[str] = None
+
+
+@r.get("/predict/status")
+async def predict_status(user=Depends(current_user)):
+    quotes = {a: {"price": predict.price_of(a), "confidence": round(predict.confidence_for(a), 3),
+                  "payouts": {d: predict.payout_multiplier(predict.confidence_for(a), d) for d in sorted(predict.DURATIONS)}} for a in predict.ASSETS}
+    return {**predict.status(), "quotes": quotes}
+
+
+@r.post("/predict/contracts", status_code=201)
+async def predict_place(body: PredictIn, user=Depends(require("DEPOSIT"))):
+    try:
+        return await predict.place(user["id"], body.asset, body.direction, body.stake, body.duration, body.idempotencyKey)
+    except ledger.LedgerError as e:
+        _err(e)
+
+
+@r.get("/predict/contracts")
+async def predict_list(user=Depends(current_user)):
+    rows = await db.predict_contracts.find({"user_id": user["id"]}, {"_id": 0}).sort("openedAt", -1).limit(50).to_list(50)
+    settled = [x for x in rows if x["status"] in ("WON", "LOST", "PUSH")]
+    return {"items": rows, "stats": {"settled": len(settled), "won": sum(1 for x in settled if x["status"] == "WON"),
+                                     "net": round(sum((x.get("payout") or 0) - x["stake"] for x in settled), 2)}}
 
 
 # ---------- webhooks (unauthenticated, signature-verified) ----------

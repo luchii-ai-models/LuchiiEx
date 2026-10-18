@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { X, Link2, AlertTriangle, Unplug, Bell, Shield, Wallet, Sliders, Send, Server, Radio, Coins, HelpCircle, BookOpen } from "lucide-react";
 import LedgerTab from "./LedgerTab";
+import PredictPanel from "./PredictPanel";
 import { useAuth } from "../../context/AuthContext";
 import { useNavigate } from "react-router-dom";
 import api, { formatApiErrorDetail } from "../../lib/api";
@@ -19,6 +20,7 @@ const TABS = [
   ["exchange", "EXCHANGE", Link2],
   ["solana", "SOLANA DEX", Coins],
   ["ledger", "LEDGER · PROFILE", BookOpen],
+  ["predict", "PREDICT", Coins],
 ];
 
 export default function SettingsModal({ bot, onClose, refresh, initialTab = "config" }) {
@@ -55,6 +57,7 @@ export default function SettingsModal({ bot, onClose, refresh, initialTab = "con
           {tab === "brokers" && <BrokersTab refresh={refresh} />}
           {tab === "alerts" && <AlertsTab bot={bot} refresh={refresh} />}
           {tab === "ledger" && <LedgerTab user={user} />}
+          {tab === "predict" && <PredictPanel />}
           {tab === "wallet" && <WalletTab bot={bot} refresh={refresh} connected={connected} goExchange={goExchange} />}
           {tab === "exchange" && <ExchangeTab bot={bot} refresh={refresh} connected={connected} preset={preset} />}
           {tab === "solana" && <SolanaTab />}
