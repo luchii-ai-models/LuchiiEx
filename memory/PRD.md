@@ -174,3 +174,9 @@ User choices: copy from trade-bridge-73; use the env values exactly; no Emergent
 - engine.entry_guard applies to BOTH strategies (aggressive bypass removed): no CHOP, ADX≥25, EMA9>21, price>VWAP, RSI 55-70, vol≥1.5x, ATR expanding, 5m/15m aligned, score≥80, conf≥80%, BTC>EMA200 & RSI>45 & trend up for alts. Loss cooldown 30m, 3-loss streak → 60m pause (bot.loss_streak/last_loss_ts). Daily loss default 3% of start equity → kill switch.
 - engine.liquidity_guard before every BUY: notional≥$50, spread≤0.05%, bid/ask imbalance≥1.25, 24h vol≥$5M. Aggressive TP 0.6→1.2 (3:1 vs 0.4 SL). Maker/post-only entries already default.
 - Not done from spec: OKX WS fill tracker, 60s reconciliation loop, orphan-order cleanup, scale-out at 1R/2R (tiers exist at %), Kelly sizing.
+
+## 2026-10-18 · Dark-only, reconciliation loop, R-based scale-out
+- Light theme removed (ThemeContext stub, CSS block deleted, toggle gone).
+- engine.reconcile(bot): every 60s per running live bot → sync_position against exchange balances + cancel open orders >5 min that are not protective stop/TP legs.
+- strategy exits: tiers now R-multiples (1R = 1.5×ATR stop distance): 25% at +1R, 25% at +2R, remaining 50% trails 2.5×ATR (update_stop runner=True).
+- User reported 4 ETH losses (-$0.12, 0% win) — all pre-guard trades in CHOP; guard now blocks them.

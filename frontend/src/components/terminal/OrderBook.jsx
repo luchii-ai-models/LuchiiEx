@@ -1,4 +1,3 @@
-import { useTheme } from "../../context/ThemeContext";
 
 export default function OrderBook({ snapshot }) {
   const light = false;

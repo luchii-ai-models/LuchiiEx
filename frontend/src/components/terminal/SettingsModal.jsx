@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { X, Link2, AlertTriangle, Unplug, Bell, Shield, Wallet, Sliders, Send, Server, Radio, Coins, HelpCircle, BookOpen } from "lucide-react";
 import LedgerTab from "./LedgerTab";
 import { useAuth } from "../../context/AuthContext";
-import { useTheme } from "../../context/ThemeContext";
 import { useNavigate } from "react-router-dom";
 import api, { formatApiErrorDetail } from "../../lib/api";
 import WalletConnect from "./WalletConnect";
@@ -26,7 +25,6 @@ export default function SettingsModal({ bot, onClose, refresh, initialTab = "con
   const { user } = useAuth();
   const [tab, setTab] = useState(initialTab);
   const navigate = useNavigate();
-  const { theme, toggle } = useTheme();
   const [preset, setPreset] = useState(null);
   const connected = bot?.exchange_connected;
   const goExchange = (id) => { setPreset(id); setTab("exchange"); };
