@@ -12,6 +12,7 @@ export default function Login() {
   const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [help, setHelp] = useState(false);
   const [name, setName] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -47,33 +48,43 @@ export default function Login() {
         <div className="panel panel-glow animate-pulse-glow p-6">
           <div className="flex items-center gap-2 text-neon-magenta mb-1">
             <Terminal size={14} />
-            <span className="text-xs tracking-[0.28em] uppercase">{mode === "login" ? "OPERATOR LOGIN" : "NEW OPERATOR"}</span>
+            <span className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white" data-testid="login-title">LUCHII <span className="text-white/90">EX</span></span>
           </div>
-          <p className="text-term-muted text-xs mb-5">Access the live trading terminal.</p>
+          <p className="text-term-muted text-xs mb-5">{mode === "login" ? "Sign in to your trading terminal." : "Create your account."}</p>
 
           <form onSubmit={submit} className="space-y-5">
             {mode === "register" && (
               <Field label="CALLSIGN" value={name} onChange={setName} placeholder="operator_01" testid="register-name-input" />
             )}
             <Field label="EMAIL" type="email" value={email} onChange={setEmail} placeholder="operator@frasberg.io" required testid="login-email-input" />
-            <Field label="PASSPHRASE" type="password" value={password} onChange={setPassword} placeholder="••••••••" required testid="login-password-input" />
+            <Field label="PASSWORD" type="password" value={password} onChange={setPassword} placeholder="••••••••" required testid="login-password-input" />
 
             {error && <div data-testid="login-error" className="text-neon-red text-xs border border-neon-red/40 bg-neon-red/5 px-3 py-2">{error}</div>}
 
             <button data-testid="login-submit-button" disabled={busy}
               className="w-full border border-neon-magenta text-neon-magenta hover:bg-neon-magenta hover:text-black transition-colors duration-200 py-3 text-sm tracking-[0.2em] uppercase flex items-center justify-center gap-2 disabled:opacity-40">
               <Zap size={14} />
-              {busy ? "AUTHENTICATING…" : mode === "login" ? "ENGAGE" : "CREATE ACCESS"}
+              {busy ? "SIGNING IN…" : mode === "login" ? "LOGIN" : "CREATE ACCOUNT"}
             </button>
           </form>
 
           <div className="mt-5 text-center text-xs text-term-muted">
-            {mode === "login" ? "No access key?" : "Already an operator?"}{" "}
+            {mode === "login" ? "Create new account?" : "Already have an account?"}{" "}
             <button data-testid="toggle-auth-mode" onClick={() => { setMode(mode === "login" ? "register" : "login"); setError(""); }}
               className="text-neon-cyan hover:text-glow-cyan underline underline-offset-4">
               {mode === "login" ? "REGISTER" : "LOGIN"}
             </button>
           </div>
+          <div className="mt-2 text-right">
+            <button type="button" data-testid="help-with-login" onClick={() => setHelp(!help)} className="text-[10px] text-term-muted hover:text-white underline underline-offset-4">Help with Login</button>
+          </div>
+          {help && (
+            <div data-testid="login-help-panel" className="mt-3 border border-term-border p-3 text-[11px] text-white/80 leading-relaxed space-y-1">
+              <p><b>Forgot password?</b> Email <a className="text-neon-cyan" href="mailto:support@frasberg.com?subject=Luchii%20Ex%20password%20reset">support@frasberg.com</a> from your account email and we will send a reset link.</p>
+              <p><b>No access to your old email?</b> Email us from your new address with your account email and the last 4 digits of your connected exchange account; we verify ownership and move the account to the new email.</p>
+              <p><b>Email change:</b> same process — verification first, then we update the login email. Never share your password or exchange API keys with anyone.</p>
+            </div>
+          )}
         </div>
       </div>
 

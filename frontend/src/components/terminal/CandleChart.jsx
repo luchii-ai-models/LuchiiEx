@@ -98,7 +98,7 @@ export default function CandleChart({ snapshot, bot, full = false, onToggleFull 
             {full ? <X size={12} /> : <Maximize2 size={12} />}
           </button>
           <span className={`ml-1 px-1.5 py-0.5 text-[9px] tracking-[0.25em] border ${bot?.status === "running" ? "border-neon-green text-neon-green" : "border-neon-cyan text-neon-cyan"}`}>
-            {bot?.status === "running" ? "LIVE FEED" : "STANDBY"}
+            {bot?.status === "running" ? "FEED" : "STANDBY"}
           </span>
         </div>
       </div>

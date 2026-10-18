@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
-import { Settings, LogOut, Activity, Download, Sun, Moon } from "lucide-react";
+import { Settings, LogOut, Activity, Download } from "lucide-react";
 import { toast } from "sonner";
 import { useInstallPrompt } from "../../hooks/useInstallPrompt";
-import { useTheme } from "../../context/ThemeContext";
 import Logo from "./Logo";
 
 function Stat({ label, value, cls = "text-white" }) {
@@ -17,7 +16,6 @@ function Stat({ label, value, cls = "text-white" }) {
 export default function Header({ bot, snapshot, user, onSettings, onLogout }) {
   const [clock, setClock] = useState("");
   const { canInstall, installed, install, isIOS } = useInstallPrompt();
-  const { theme, toggle } = useTheme();
 
   useEffect(() => {
     const t = setInterval(() => setClock(new Date().toLocaleTimeString("en-GB")), 1000);
@@ -41,10 +39,7 @@ export default function Header({ bot, snapshot, user, onSettings, onLogout }) {
         <div className="shrink-0"><Logo size={36} /></div>
         <div className="leading-none min-w-0">
           <div className="text-xs sm:text-sm font-extrabold tracking-tighter flex items-center gap-1.5 sm:gap-2 flex-wrap">
-            <span className="truncate">LUCHII 4.7 · <span className="text-neon-magenta text-glow-magenta">FRASBERG</span> · BTC</span>
-            <span className={`px-1.5 py-0.5 text-[9px] tracking-[0.2em] border ${live ? "border-neon-green text-neon-green" : "border-term-muted text-term-muted"}`}>
-              {live ? "● LIVE" : "○ IDLE"}
-            </span>
+            <span className="truncate text-base sm:text-lg">LUCHII <span className="text-white">EX</span></span>
             {bot?.mode === "live"
               ? <span className="px-1.5 py-0.5 text-[9px] tracking-[0.2em] border border-neon-red text-neon-red">REAL</span>
               : <span className="px-1.5 py-0.5 text-[9px] tracking-[0.2em] border border-neon-cyan text-neon-cyan">DRY</span>}
@@ -54,15 +49,11 @@ export default function Header({ bot, snapshot, user, onSettings, onLogout }) {
       </div>
 
       <div className="flex items-center gap-3 sm:gap-6">
+        <div className="hidden sm:block"><Stat label="AVAILABLE FUNDS" value={bot?.mode === "live" && bot?.live_equity != null ? `$${Number(bot.live_equity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"} cls="text-white" /></div>
         <Stat label="BTC/USD" value={price ? `$${price.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : "—"} cls="text-neon-magenta text-glow-magenta" />
         <div className="hidden md:block"><Stat label="ETH/USD" value={snapshot?.eth ? `$${snapshot.eth.toLocaleString()}` : "—"} cls="text-neon-cyan" /></div>
-        <div className="hidden sm:block"><Stat label="TRADES" value={bot ? `${bot.trades_count}` : "—"} /></div>
-        <Stat label="WIN%" value={bot ? `${bot.win_rate}%` : "—"} cls="text-neon-green" />
+        <div className="hidden lg:block"><Stat label="SOL/USD" value={snapshot?.sol ? `$${snapshot.sol.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : "—"} cls="text-white" /></div>
         <span className="tnum text-sm text-term-muted hidden lg:inline">{clock}</span>
-        <button data-testid="theme-toggle-button" onClick={toggle} title="Toggle theme"
-          className="text-term-muted hover:text-neon-amber transition-colors">
-          {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
-        </button>
         {canInstall && !installed && (
           <button data-testid="install-app-button" onClick={handleInstall} title="Install app"
             className="text-neon-cyan hover:text-glow-cyan transition-colors"><Download size={16} /></button>

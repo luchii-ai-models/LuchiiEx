@@ -25,7 +25,7 @@ export default function BotStatusCard({ bot, refresh, highlightKill }) {
   return (
     <div className="panel panel-glow animate-pulse-glow p-3 shrink-0">
       <div className="flex items-center justify-between">
-        <span className="panel-label">◈ ACTIVE ENGINE</span>
+        <span className="panel-label">◈ ACTIVE</span>
         <span className={`px-1.5 py-0.5 text-[9px] tracking-[0.2em] border ${live ? "border-neon-green text-neon-green" : "border-term-muted text-term-muted"}`}>
           {live ? "LIVE" : "STOPPED"}
         </span>

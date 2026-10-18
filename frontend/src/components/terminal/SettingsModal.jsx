@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { X, Link2, AlertTriangle, Unplug, Bell, Shield, Wallet, Sliders, Send, Server, Radio, Coins, MessageSquare, HelpCircle } from "lucide-react";
+import { X, Link2, AlertTriangle, Unplug, Bell, Shield, Wallet, Sliders, Send, Server, Radio, Coins, MessageSquare, HelpCircle, Sun, Moon } from "lucide-react";
+import { useTheme } from "../../context/ThemeContext";
 import { useNavigate } from "react-router-dom";
 import api, { formatApiErrorDetail } from "../../lib/api";
 import WalletConnect from "./WalletConnect";
@@ -21,6 +22,7 @@ const TABS = [
 export default function SettingsModal({ bot, onClose, refresh, initialTab = "config" }) {
   const [tab, setTab] = useState(initialTab);
   const navigate = useNavigate();
+  const { theme, toggle } = useTheme();
   const [preset, setPreset] = useState(null);
   const connected = bot?.exchange_connected;
   const goExchange = (id) => { setPreset(id); setTab("exchange"); };
@@ -40,6 +42,8 @@ export default function SettingsModal({ bot, onClose, refresh, initialTab = "con
               <option key={id} value={id} className="bg-term-surface text-white">{label}</option>
             ))}
           </select>
+          <button data-testid="theme-toggle-button" onClick={toggle} title="Toggle theme"
+            className="text-term-muted hover:text-neon-amber transition-colors">{theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}</button>
           <button data-testid="open-chat-button" onClick={() => navigate("/chat")} title="Luchii chat"
             className="text-term-muted hover:text-neon-magenta transition-colors"><MessageSquare size={16} /></button>
           <button data-testid="open-help-button" onClick={() => navigate("/help")} title="Help center"

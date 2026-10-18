@@ -17,7 +17,7 @@ export default function SignalScoreCard({ bot }) {
   return (
     <div className="panel p-3" data-testid="signal-score-card">
       <div className="flex justify-between items-center mb-2">
-        <span className="panel-label">SIGNAL SCORE</span>
+        <span className="panel-label">SIGNAL</span>
         <span data-testid="strategy-name" className="text-[10px] text-neon-magenta tracking-[0.15em]">{data?.strategy === "aggressive" ? "AGGRESSIVE" : "LUCHII_003"}</span>
       </div>
       {!assets.length && <p className="text-[10px] text-term-muted">Loading…</p>}

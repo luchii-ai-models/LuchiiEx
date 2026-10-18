@@ -34,7 +34,7 @@ export default function StrategyHealthCard() {
   return (
     <div className="panel p-3" data-testid="strategy-health-card">
       <div className="flex justify-between items-center mb-2">
-        <span className="panel-label">STRATEGY HEALTH · 30D</span>
+        <span className="panel-label">STRATEGY</span>
         <div className="flex gap-1 items-center">
           <button data-testid="export-audit-csv" onClick={exportCsv} disabled={busy === "csv"}
             className="text-[9px] tracking-[0.15em] border border-term-border text-term-muted hover:text-white px-2 py-0.5">CSV</button>

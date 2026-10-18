@@ -33,7 +33,7 @@ function FullLog({ onClose }) {
   return (
     <div className="fixed inset-0 z-[200] bg-black/95 flex flex-col font-mono" data-testid="full-log-modal">
       <div className="px-3 py-2 border-b border-term-border flex items-center justify-between gap-2 flex-wrap">
-        <span className="panel-label">◈ EXECUTION LOG · LAST 24H · {rows ? rows.length : "…"} ENTRIES</span>
+        <span className="panel-label">◈ LOG · LAST 24H · {rows ? rows.length : "…"} ENTRIES</span>
         <div className="flex items-center gap-1">
           {["ALL", "BUY", "SELL", "FILLS", "HOLD"].map((f) => (
             <button key={f} data-testid={`full-log-filter-${f}`} onClick={() => setFilter(f)}
@@ -57,7 +57,7 @@ export default function ExecutionLog({ logs }) {
   return (
     <div className="panel h-40 shrink-0 flex flex-col">
       <div className="px-2 py-1.5 border-b border-term-border flex items-center justify-between">
-        <span className="panel-label">◈ EXECUTION LOG · LIVE<span className="animate-blink text-neon-magenta">▊</span></span>
+        <span className="panel-label">◈ LOG<span className="animate-blink text-neon-magenta">▊</span></span>
         <div className="flex items-center gap-2">
           <span className="panel-label text-[8px]">LUCHII ENGINE</span>
           <button data-testid="open-full-log" onClick={() => setOpen(true)} title="Full-screen 24h log"

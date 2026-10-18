@@ -35,11 +35,11 @@ export default function BrokerBadges({ status }) {
   return (
     <div className="panel p-2 shrink-0" data-testid="broker-health-panel">
       <div className="flex items-center justify-between mb-1.5">
-        <span className="panel-label">◈ MIRROR HEALTH</span>
-        <span className="panel-label text-[8px]">RTT · STATE</span>
+        <span className="panel-label">◈ EXCHANGE</span>
+        <span className="panel-label text-[8px]">{any ? "ON" : "OFF"}</span>
       </div>
       {!any ? (
-        <div className="panel-label text-[9px] py-1">NO BROKERS LINKED · SETTINGS → BROKERS</div>
+        <div className="panel-label text-[9px] py-1">NO EXCHANGE LINKED · SETTINGS → EXCHANGE</div>
       ) : (
         <div className="space-y-1">
           {s.exchange?.connected && <Badge label={`EXCHANGE · ${(s.exchange.name || "").toUpperCase()}`} data={s.exchange} kind="exchange" />}
