@@ -124,3 +124,12 @@ User choices: copy from trade-bridge-73; use the env values exactly; no Emergent
 - 2026-06 Screenshot edits round 2: right-column cards (Trader streak, Signal score, Strategy health, Validation) wrapped in Collapsible drop-down tabs (state persisted in localStorage); chart full-screen pop-out (Maximize icon next to LIVE FEED, portal to body); execution-log pop-out also portaled.
 - 2026-06 Mockup text/icon edits: header brand "LUCHII EX" (version/FRASBERG/BTC + IDLE badge removed), header stats = AVAILABLE FUNDS (live equity), BTC/ETH/SOL, clock; theme toggle moved into Settings header row (next to chat/help). Card titles: ACTIVE, EXCHANGE (ON/OFF), LOG, FEED, #1 TRADER · STREAK, SIGNAL, STRATEGY. Login: title "LUCHII EX", label PASSWORD, button LOGIN / CREATE ACCOUNT, "Create new account? REGISTER", "Help with Login" panel (password reset / lost email / email change instructions via support@frasberg.com).
 - 2026-06 Quiet-market filter (aggressive): flat + 1m ATR%×6 < net TP → HOLD "market too quiet · target unreachable" (fees would eat the trade). Test in tests/test_iteration18_dip_entry.py. Honest day review 17/10: 4 aggressive trades, all small net losses in a ±0.03%/min flat market; LUCHII_003 filters said no-trade all day and would have preserved capital.
+
+
+## 2026-10-18 · UI pass (screenshot edits)
+- New transparent Luchii Ex emblem (src/assets/luchii-logo.png + PWA icons), cyan glow; old Frasberg AI badge removed.
+- Login: title centered, terminal/zap icons + subtitle removed.
+- Header: REAL/DRY badge moved into ACTIVE card next to LIVE/STOPPED (`bot-mode-badge`).
+- ORDER BOOK and ANALYTICS are now Collapsible drop-down tabs.
+- Footer: single "© 2026, Frasberg, Inc." link to /info/capabilities (login + dashboard).
+- Verified via screenshots (desktop, no overflow, no console errors). No trading logic changed; no profit guarantee implied.

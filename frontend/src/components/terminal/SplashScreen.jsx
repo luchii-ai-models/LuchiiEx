@@ -17,7 +17,7 @@ export default function SplashScreen() {
       >
         <img
           src={logoUrl}
-          alt="Frasberg AI · Luchii"
+          alt="Luchii Ex"
           className="rounded-full animate-spin-slow"
           style={{ width: 150, height: 150, filter: "drop-shadow(0 0 24px rgba(60,140,255,0.5))" }}
         />

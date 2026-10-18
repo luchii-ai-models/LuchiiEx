@@ -116,10 +116,10 @@ export default function Dashboard() {
           <Collapsible id="signal" title="SIGNAL"><SignalScoreCard bot={bot} /></Collapsible>
           <Collapsible id="strategy" title="STRATEGY"><StrategyHealthCard /></Collapsible>
           <Collapsible id="validation" title="AGENT VOTE · VALIDATION"><ValidationCard assets={bot?.assets} /></Collapsible>
-          <OrderBook snapshot={snapshot} />
+          <Collapsible id="orderbook" title="ORDER BOOK"><OrderBook snapshot={snapshot} /></Collapsible>
           <div className="grid grid-cols-2 gap-2 flex-1 min-h-[220px]">
             <RecentTrades trades={trades} />
-            <Analytics trades={trades} bot={bot} />
+            <Collapsible id="analytics" title="ANALYTICS"><Analytics trades={trades} bot={bot} /></Collapsible>
           </div>
         </div>
       </div>

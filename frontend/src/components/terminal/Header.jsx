@@ -40,9 +40,6 @@ export default function Header({ bot, snapshot, user, onSettings, onLogout }) {
         <div className="leading-none min-w-0">
           <div className="text-xs sm:text-sm font-extrabold tracking-tighter flex items-center gap-1.5 sm:gap-2 flex-wrap">
             <span className="truncate text-base sm:text-lg">LUCHII <span className="text-white">EX</span></span>
-            {bot?.mode === "live"
-              ? <span className="px-1.5 py-0.5 text-[9px] tracking-[0.2em] border border-neon-red text-neon-red">REAL</span>
-              : <span className="px-1.5 py-0.5 text-[9px] tracking-[0.2em] border border-neon-cyan text-neon-cyan">DRY</span>}
           </div>
           <div className="panel-label mt-1 hidden sm:flex items-center gap-1"><Activity size={9} /> COINBASE FEED · LUCHII ENGINE</div>
         </div>

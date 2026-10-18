@@ -26,9 +26,14 @@ export default function BotStatusCard({ bot, refresh, highlightKill }) {
     <div className="panel panel-glow animate-pulse-glow p-3 shrink-0">
       <div className="flex items-center justify-between">
         <span className="panel-label">◈ ACTIVE</span>
-        <span className={`px-1.5 py-0.5 text-[9px] tracking-[0.2em] border ${live ? "border-neon-green text-neon-green" : "border-term-muted text-term-muted"}`}>
-          {live ? "LIVE" : "STOPPED"}
-        </span>
+        <div className="flex items-center gap-1.5">
+          {bot.mode === "live"
+            ? <span data-testid="bot-mode-badge" className="px-1.5 py-0.5 text-[9px] tracking-[0.2em] border border-neon-red text-neon-red">REAL</span>
+            : <span data-testid="bot-mode-badge" className="px-1.5 py-0.5 text-[9px] tracking-[0.2em] border border-neon-cyan text-neon-cyan">DRY</span>}
+          <span className={`px-1.5 py-0.5 text-[9px] tracking-[0.2em] border ${live ? "border-neon-green text-neon-green" : "border-term-muted text-term-muted"}`}>
+            {live ? "LIVE" : "STOPPED"}
+          </span>
+        </div>
       </div>
       <div className="mt-1 text-lg font-extrabold tracking-tighter">{bot.name}</div>
       <div className="panel-label text-[9px]">EQUITY (USD)</div>

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { formatApiErrorDetail } from "../lib/api";
-import { Terminal, Zap, Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff } from "lucide-react";
 import Footer from "../components/terminal/Footer";
 import Logo from "../components/terminal/Logo";
 
@@ -46,11 +46,9 @@ export default function Login() {
         </div>
 
         <div className="panel panel-glow animate-pulse-glow p-6">
-          <div className="flex items-center gap-2 text-neon-magenta mb-1">
-            <Terminal size={14} />
+          <div className="flex items-center justify-center mb-6">
             <span className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white" data-testid="login-title">LUCHII <span className="text-white/90">EX</span></span>
           </div>
-          <p className="text-term-muted text-xs mb-5">{mode === "login" ? "Sign in to your trading terminal." : "Create your account."}</p>
 
           <form onSubmit={submit} className="space-y-5">
             {mode === "register" && (
@@ -63,7 +61,6 @@ export default function Login() {
 
             <button data-testid="login-submit-button" disabled={busy}
               className="w-full border border-neon-magenta text-neon-magenta hover:bg-neon-magenta hover:text-black transition-colors duration-200 py-3 text-sm tracking-[0.2em] uppercase flex items-center justify-center gap-2 disabled:opacity-40">
-              <Zap size={14} />
               {busy ? "SIGNING IN…" : mode === "login" ? "LOGIN" : "CREATE ACCOUNT"}
             </button>
           </form>
