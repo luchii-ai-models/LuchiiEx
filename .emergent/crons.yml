@@ -1,0 +1,8 @@
+crons:
+  - name: nightly-revalidate
+    description: "Re-runs backtest v2 + Monte Carlo + crash tests for BTC/ETH/SOL nightly; auto-rolls back a failing strategy"
+    cron: "15 3 * * *"
+    endpoint: "{{BASE_URL}}/api/cron/revalidate"
+    method: POST
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true

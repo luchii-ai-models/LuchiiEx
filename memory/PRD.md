@@ -194,3 +194,9 @@ User choices: copy from trade-bridge-73; use the env values exactly; no Emergent
 ## 2026-10-18 · Predict LIVE + AI auto-predict
 - PREDICT_ENABLED=true. predict.auto_worker (15s): for every bot with auto_predict≠false, if USD wallet ≥ $1 and daily Predict net > −max($2, 5% wallet): per asset with no open contract, ai_direction() → UP when confidence ≥0.80 (non-CHOP), DOWN on mirrored bearish score ≥0.80; stake 2% wallet clamped $1–$5, 60s, logged to bot log as engine=predict. Status/rules exposed in /api/predict/status and PredictPanel.
 - Caveat: Luchii house is counterparty; AI wins for users are house losses (zero-sum inside platform). Liability cap $2000.
+
+## 2026-10-18 · Sweep, nightly cron, Predict scoreboard
+- 30d sweep: BTC REJECT (36 trades, PF 0.06), ETH REJECT (119, PF 0.19, −17%), SOL REJECT (90, PF 0.34). Live OKX entries remain blocked by the promotion gate for all three.
+- .emergent/crons.yml nightly-revalidate 03:15 UTC → POST /api/cron/revalidate (Bearer WEBHOOK_CRON_SECRET, idempotent on X-Webhook-Id, 202 ack, background sweep BTC→ETH→SOL 30d; auto-rollback when a previously PROMOTEd (strategy,asset) now REJECTs). Verified 401/401/202/duplicate.
+- /api/leaderboard now = trade realized + Predict net (predictWon/predictN); /api/predict/mine; StreakCard shows REALIZED · ALL PRODUCTS and combined win rate.
+- AI auto-predict observed live: ETH UP $1 60s @ 2.05x at 100% conviction.

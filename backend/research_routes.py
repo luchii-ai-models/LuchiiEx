@@ -1,9 +1,11 @@
 import asyncio
 import concurrent.futures
+import hmac
+import os
 import uuid
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 
 from auth import current_user
@@ -29,7 +31,7 @@ async def gates(user=Depends(current_user)):
         raise HTTPException(500, {"code": "GATE_CONFIG_INVALID", "message": str(e)[:300]})
 
 
-async def _run(uid: str, asset: str, days: int):
+async def _run(uid: str, asset: str, days: int, auto_rollback: bool = False):
     key = f"{asset}"
     try:
         from research.runner import validation_job
@@ -39,8 +41,46 @@ async def _run(uid: str, asset: str, days: int):
         rec = await registry.add({"strategy": report["strategy"], "version": report["version"], "asset": asset, "status": report["promotion"]["status"],
                                   "score": report["promotion"]["score"], "reasons": report["promotion"]["reasons"], "actor": uid, "report": report})
         JOBS[key] = {"status": "done", "ts": now_ms(), "promotion": report["promotion"]["status"], "id": rec["id"]}
+        if auto_rollback and report["promotion"]["status"] == "REJECT":
+            prev = await db.promotions.find_one({"strategy": report["strategy"], "asset": asset, "status": "PROMOTE", "ts": {"$lt": rec["ts"]}}, {"_id": 1})
+            if prev:
+                await registry.rollback(report["strategy"], report["version"], [f"nightly revalidation {asset}: " + "; ".join(report["promotion"]["reasons"][:3])], f"nightly:{asset}:{rec['id']}", "cron")
     except Exception as e:  # noqa: BLE001
         JOBS[key] = {"status": "error", "error": str(e)[:300], "ts": now_ms()}
+
+
+async def _sweep(run_id: str):
+    for a in ("BTC", "ETH", "SOL"):
+        JOBS[a] = {"status": "queued", "ts": now_ms(), "run_id": run_id}
+        await _run("cron", a, 30, auto_rollback=True)
+    await db.cron_runs.update_one({"run_id": run_id}, {"$set": {"finished_at": now_ms(), "results": {a: JOBS[a] for a in ("BTC", "ETH", "SOL")}}})
+
+
+@r.post("/cron-revalidate", include_in_schema=False)
+async def _unused():  # keeps router prefix clean; real cron route is registered below on /api/cron/revalidate
+    raise HTTPException(404)
+
+
+cron = APIRouter(prefix="/cron")
+
+
+@cron.post("/revalidate", status_code=202)
+async def cron_revalidate(request: Request, authorization: Optional[str] = Header(None), x_webhook_id: Optional[str] = Header(None)):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    secret = os.environ["WEBHOOK_CRON_SECRET"]
+    token = (authorization or "").removeprefix("Bearer ").strip()
+    if not authorization or not authorization.startswith("Bearer ") or not hmac.compare_digest(token, secret):
+        raise HTTPException(401, "unauthorized")
+    try:
+        body = await request.json() if await request.body() else {}
+    except ValueError:
+        raise HTTPException(400, "invalid body")
+    run_id = x_webhook_id or body.get("run_id") or str(uuid.uuid4())
+    if await db.cron_runs.find_one({"run_id": run_id}, {"_id": 1}):
+        return {"ok": True, "duplicate": True, "run_id": run_id}
+    await db.cron_runs.insert_one({"run_id": run_id, "job": "revalidate", "started_at": now_ms(), "event": body.get("event")})
+    asyncio.create_task(_sweep(run_id))
+    return {"ok": True, "queued": ["BTC", "ETH", "SOL"], "run_id": run_id}
 
 
 @r.post("/run/{asset}")

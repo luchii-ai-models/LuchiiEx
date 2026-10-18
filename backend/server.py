@@ -396,8 +396,23 @@ async def pending_reject(user=Depends(current_user)):
 
 @api.get("/leaderboard")
 async def leaderboard(user=Depends(current_user)):
-    bots = await db.bots.find({}, {"_id": 0, "name": 1, "realized_pnl": 1}).sort([("realized_pnl", -1), ("name", 1)]).to_list(50)
-    return [{"rank": i + 1, "name": b["name"], "pnl": round(b.get("realized_pnl", 0), 2)} for i, b in enumerate(bots)]
+    bots = await db.bots.find({}, {"_id": 0, "name": 1, "realized_pnl": 1, "user_id": 1}).to_list(100)
+    pred = {row["_id"]: row async for row in db.predict_contracts.aggregate([
+        {"$match": {"status": {"$in": ["WON", "LOST", "PUSH"]}}},
+        {"$group": {"_id": "$user_id", "net": {"$sum": {"$subtract": [{"$ifNull": ["$payout", 0]}, "$stake"]}}, "won": {"$sum": {"$cond": [{"$eq": ["$status", "WON"]}, 1, 0]}}, "n": {"$sum": 1}}}])}
+    rows = []
+    for b in bots:
+        p = pred.get(b["user_id"], {})
+        trade, pnet = round(b.get("realized_pnl", 0), 2), round(p.get("net", 0), 2)
+        rows.append({"name": b["name"], "pnl": round(trade + pnet, 2), "tradePnl": trade, "predictNet": pnet, "predictWon": p.get("won", 0), "predictN": p.get("n", 0)})
+    rows.sort(key=lambda x: (-x["pnl"], x["name"]))
+    return [{"rank": i + 1, **x} for i, x in enumerate(rows[:50])]
+
+
+@api.get("/predict/mine")
+async def predict_mine(user=Depends(current_user)):
+    rows = await db.predict_contracts.find({"user_id": user["id"], "status": {"$in": ["WON", "LOST", "PUSH"]}}, {"_id": 0, "stake": 1, "payout": 1, "status": 1}).to_list(5000)
+    return {"n": len(rows), "won": sum(1 for r in rows if r["status"] == "WON"), "net": round(sum((r.get("payout") or 0) - r["stake"] for r in rows), 2)}
 
 
 @api.get("/market/snapshot")
@@ -1045,6 +1060,7 @@ app.include_router(api)
 api.include_router(ledger_routes.r)
 app.include_router(ledger_routes.r, prefix="/api")
 app.include_router(research_routes.r, prefix="/api")
+app.include_router(research_routes.cron, prefix="/api")
 app.add_middleware(CORSMiddleware, allow_origins=os.environ["CORS_ORIGINS"].split(","), allow_credentials=False,
                    allow_methods=["*"], allow_headers=["*"])
 
