@@ -200,3 +200,9 @@ User choices: copy from trade-bridge-73; use the env values exactly; no Emergent
 - .emergent/crons.yml nightly-revalidate 03:15 UTC → POST /api/cron/revalidate (Bearer WEBHOOK_CRON_SECRET, idempotent on X-Webhook-Id, 202 ack, background sweep BTC→ETH→SOL 30d; auto-rollback when a previously PROMOTEd (strategy,asset) now REJECTs). Verified 401/401/202/duplicate.
 - /api/leaderboard now = trade realized + Predict net (predictWon/predictN); /api/predict/mine; StreakCard shows REALIZED · ALL PRODUCTS and combined win rate.
 - AI auto-predict observed live: ETH UP $1 60s @ 2.05x at 100% conviction.
+
+## 2026-10-18 · Strategy Lab (1m/5m/15m) + Predict uses all system funds
+- validation_job(asset, days, cash, timeframe) resamples 1m→5m/15m OHLCV; promotions carry timeframe; registry.is_promoted passes if ANY timeframe PROMOTEd; registry.active_timeframe picks highest-score PROMOTE → strategy.ACTIVE_TF; market.refresh fetches tf candles when ACTIVE_TF≠1m; engine.snapshot evaluates on them. Nightly sweep = 3 assets × 3 tfs. /research/run/{asset}?timeframe=all|1m|5m|15m. Risk page shows per-tf chips + LIVE TF.
+- ETH 5m 14d: REJECT (8 trades, PF 0.89, −0.4%) vs 1m PF 0.19. Still no PROMOTE anywhere; live OKX gate closed.
+- Predict funds: predict.total_funds = ledger USD + (bot.live_equity − mirrored); ensure_funds() auto-posts DR EXCHANGE_MIRROR_USD / CR user wallet before a stake (no more "insufficient balance"). Auto-predict now 3s contracts, stake 100% of funds (cap $100), 25% daily-loss pause (env PREDICT_AUTO_DURATION / PREDICT_AUTO_STAKE_PCT / PREDICT_DAILY_LOSS_PCT). Verified Luchii_002 ($17.42 OKX) placed $5 and WON $9, trial balance OK.
+- RISK NOTE: mirror is a book entry — house pays Predict wins while the user's cash physically sits on OKX; treasury must sweep.

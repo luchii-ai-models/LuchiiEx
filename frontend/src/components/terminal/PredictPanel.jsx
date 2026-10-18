@@ -28,7 +28,8 @@ export default function PredictPanel() {
       <div className="text-[10px] text-neon-amber border border-neon-amber/40 rounded p-2" data-testid="predict-notice">{st.notice}{!st.enabled && " · DISABLED ON THIS SERVER (PREDICT_ENABLED)"}</div>
       {st.enabled && (
         <div className="text-[10px] border border-neon-green/40 rounded p-2 text-neon-green" data-testid="auto-predict-status">
-          AI AUTO-PREDICT {st.autoPredict ? "ON" : "OFF"} · places {st.autoRules.duration}s contracts on its own when conviction ≥ {Math.round(st.autoRules.minConfidence * 100)}% · stake {st.autoRules.stakePct * 100}% of wallet (max ${st.autoRules.maxStake}) · stops after a {st.autoRules.dailyLossPct * 100}% daily loss · works from $1
+          AI AUTO-PREDICT {st.autoPredict ? "ON" : "OFF"} · {st.autoRules.duration}s contracts on its own when conviction ≥ {Math.round(st.autoRules.minConfidence * 100)}% · stakes {Math.round(st.autoRules.stakePct * 100)}% of all funds in the system (max ${st.autoRules.maxStake}) · pauses after a {Math.round(st.autoRules.dailyLossPct * 100)}% daily loss
+          <div className="text-white mt-1 tnum" data-testid="predict-funds">FUNDS AVAILABLE TO PREDICT ${Number(st.funds || 0).toFixed(2)} <span className="text-term-muted">(ledger USD + exchange equity, mirrored automatically)</span></div>
           {Object.entries(st.quotes).some(([, q]) => q.aiSignal) && <div className="text-white mt-1">signal now: {Object.entries(st.quotes).filter(([, q]) => q.aiSignal).map(([a, q]) => `${a} ${q.aiSignal}`).join(" · ")}</div>}
         </div>
       )}

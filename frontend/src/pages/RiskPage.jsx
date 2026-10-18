@@ -37,6 +37,9 @@ function AssetReport({ asset, r, onRun, running }) {
           <span className={`text-[9px] ${r.live_allowed ? "text-neon-green" : "text-neon-amber"}`} data-testid={`live-gate-${asset}`}>
             {r.live_allowed ? <ShieldCheck size={12} className="inline" /> : <ShieldAlert size={12} className="inline" />} LIVE {r.live_allowed ? "ALLOWED" : "BLOCKED"} · {r.live_reason}
           </span>
+          {Object.entries(r.timeframes || {}).map(([tf, t]) => (
+            <span key={tf} data-testid={`tf-${asset}-${tf}`} className={`text-[9px] px-1.5 py-0.5 border rounded ${t.status === "PROMOTE" ? "border-neon-green text-neon-green" : "border-term-border text-term-muted"}`}>{tf} {t.status === "PROMOTE" ? "✓" : "✗"} {t.score}</span>
+          ))}
         </div>
         <button data-testid={`run-validation-${asset}`} disabled={running} onClick={() => onRun(asset)}
           className="text-[10px] px-2 py-1 border border-neon-cyan text-neon-cyan hover:bg-neon-cyan hover:text-black transition-colors disabled:opacity-40 flex items-center gap-1">
@@ -111,7 +114,7 @@ export default function RiskPage() {
   };
   useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, []);
   const run = async (asset) => {
-    try { await api.post(`/research/run/${asset}?days=30`); toast.success(`${asset} validation queued · backtest v2 → Monte Carlo → crash tests`); load(); }
+    try { await api.post(`/research/run/${asset}?days=30&timeframe=all`); toast.success(`${asset} validation queued · 1m, 5m, 15m → best passing timeframe goes live`); load(); }
     catch (e) { toast.error(e.response?.data?.detail?.message || "cannot start"); }
   };
   const rollback = async () => {
@@ -122,7 +125,7 @@ export default function RiskPage() {
     <div className="min-h-screen bg-black text-white p-4 space-y-4" data-testid="risk-page">
       <div className="flex items-center justify-between">
         <button data-testid="risk-back" onClick={() => nav("/")} className="text-term-muted hover:text-white text-xs flex items-center gap-1"><ArrowLeft size={12} /> TERMINAL</button>
-        <h1 className="text-base md:text-lg font-bold tracking-widest">RISK · PROMOTION PIPELINE</h1>
+        <h1 className="text-base md:text-lg font-bold tracking-widest">RISK · PROMOTION PIPELINE <span className="text-[10px] text-neon-cyan font-normal" data-testid="active-timeframe">LIVE TF {data?.active_timeframe || "1m"}</span></h1>
         <button data-testid="rollback-button" onClick={rollback} className="text-[10px] px-2 py-1 border border-neon-red text-neon-red hover:bg-neon-red hover:text-black flex items-center gap-1"><RotateCcw size={10} /> ROLLBACK</button>
       </div>
       <p className="text-[10px] text-term-muted">No strategy reaches OKX unless it passes backtest v2 (real fills, fees, slippage) + Monte Carlo + correlated crash tests + risk gates (<code>risk_gates.yaml</code>). Past results never guarantee future returns.</p>
@@ -138,7 +141,7 @@ export default function RiskPage() {
           {live.rollback_triggers?.length > 0 && <div className="col-span-full text-[10px] text-neon-red">ROLLBACK POLICY BREACHED · {live.rollback_triggers.join(" · ")}</div>}
         </div>
       )}
-      {data ? ["BTC", "ETH", "SOL"].map((a) => <AssetReport key={a} asset={a} r={data.assets[a]} onRun={run} running={["queued", "running"].includes(jobs[a]?.status)} />) : <div className="text-term-muted text-xs">loading…</div>}
+      {data ? ["BTC", "ETH", "SOL"].map((a) => <AssetReport key={a} asset={a} r={data.assets[a]} onRun={run} running={Object.entries(jobs).some(([k, j]) => k.startsWith(a) && ["queued", "running"].includes(j.status))} />) : <div className="text-term-muted text-xs">loading…</div>}
       {data?.history?.length > 0 && (
         <div className="panel p-3">
           <div className="text-[9px] text-term-muted mb-1">PROMOTION HISTORY</div>

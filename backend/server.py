@@ -1076,6 +1076,9 @@ async def startup():
     import predict
     asyncio.create_task(predict.worker())
     asyncio.create_task(predict.auto_worker())
+    from research import registry as _reg
+    import strategy as _st
+    _st.ACTIVE_TF["tf"] = await _reg.active_timeframe("luchii003")
     await db.bots.create_index("user_id", unique=True)
     await db.bot_logs.create_index([("user_id", 1), ("ts", -1)])
     await db.bot_trades.create_index([("user_id", 1), ("ts", -1)])

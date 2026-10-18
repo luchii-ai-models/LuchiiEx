@@ -31,29 +31,32 @@ async def gates(user=Depends(current_user)):
         raise HTTPException(500, {"code": "GATE_CONFIG_INVALID", "message": str(e)[:300]})
 
 
-async def _run(uid: str, asset: str, days: int, auto_rollback: bool = False):
-    key = f"{asset}"
+async def _run(uid: str, asset: str, days: int, auto_rollback: bool = False, timeframe: str = "1m"):
+    key = f"{asset}@{timeframe}"
     try:
         from research.runner import validation_job
-        JOBS[key].update(status="running", stage="fetch candles · backtest v2 · MC · crash tests (worker process)")
+        JOBS[key] = {**JOBS.get(key, {}), "status": "running", "stage": f"{timeframe} · fetch candles · backtest v2 · MC · crash tests (worker process)"}
         with concurrent.futures.ProcessPoolExecutor(max_workers=1) as pool:
-            report = await asyncio.get_running_loop().run_in_executor(pool, validation_job, asset, days)
-        rec = await registry.add({"strategy": report["strategy"], "version": report["version"], "asset": asset, "status": report["promotion"]["status"],
+            report = await asyncio.get_running_loop().run_in_executor(pool, validation_job, asset, days, 10000.0, timeframe)
+        rec = await registry.add({"strategy": report["strategy"], "version": report["version"], "asset": asset, "timeframe": timeframe, "status": report["promotion"]["status"],
                                   "score": report["promotion"]["score"], "reasons": report["promotion"]["reasons"], "actor": uid, "report": report})
         JOBS[key] = {"status": "done", "ts": now_ms(), "promotion": report["promotion"]["status"], "id": rec["id"]}
         if auto_rollback and report["promotion"]["status"] == "REJECT":
-            prev = await db.promotions.find_one({"strategy": report["strategy"], "asset": asset, "status": "PROMOTE", "ts": {"$lt": rec["ts"]}}, {"_id": 1})
+            prev = await db.promotions.find_one({"strategy": report["strategy"], "asset": asset, "timeframe": timeframe, "status": "PROMOTE", "ts": {"$lt": rec["ts"]}}, {"_id": 1})
             if prev:
-                await registry.rollback(report["strategy"], report["version"], [f"nightly revalidation {asset}: " + "; ".join(report["promotion"]["reasons"][:3])], f"nightly:{asset}:{rec['id']}", "cron")
+                await registry.rollback(report["strategy"], report["version"], [f"nightly revalidation {asset}@{timeframe}: " + "; ".join(report["promotion"]["reasons"][:3])], f"nightly:{asset}:{timeframe}:{rec['id']}", "cron")
+        import strategy
+        strategy.ACTIVE_TF["tf"] = await registry.active_timeframe("luchii003")
     except Exception as e:  # noqa: BLE001
         JOBS[key] = {"status": "error", "error": str(e)[:300], "ts": now_ms()}
 
 
 async def _sweep(run_id: str):
     for a in ("BTC", "ETH", "SOL"):
-        JOBS[a] = {"status": "queued", "ts": now_ms(), "run_id": run_id}
-        await _run("cron", a, 30, auto_rollback=True)
-    await db.cron_runs.update_one({"run_id": run_id}, {"$set": {"finished_at": now_ms(), "results": {a: JOBS[a] for a in ("BTC", "ETH", "SOL")}}})
+        for tf in ("1m", "5m", "15m"):
+            JOBS[f"{a}@{tf}"] = {"status": "queued", "ts": now_ms(), "run_id": run_id}
+            await _run("cron", a, 30, auto_rollback=True, timeframe=tf)
+    await db.cron_runs.update_one({"run_id": run_id}, {"$set": {"finished_at": now_ms(), "results": {k: v for k, v in JOBS.items()}}})
 
 
 @r.post("/cron-revalidate", include_in_schema=False)
@@ -84,13 +87,17 @@ async def cron_revalidate(request: Request, authorization: Optional[str] = Heade
 
 
 @r.post("/run/{asset}")
-async def run(asset: Literal["BTC", "ETH", "SOL"], days: int = 30, user=Depends(current_user)):
+async def run(asset: Literal["BTC", "ETH", "SOL"], days: int = 30, timeframe: Literal["1m", "5m", "15m", "all"] = "all", user=Depends(current_user)):
     _admin(user)
-    if JOBS.get(asset, {}).get("status") in ("queued", "running"):
-        return {"status": JOBS[asset]["status"], "asset": asset}
-    JOBS[asset] = {"status": "queued", "ts": now_ms()}
-    asyncio.create_task(_run(user["id"], asset, max(7, min(days, 90))))
-    return {"status": "queued", "asset": asset}
+    tfs = ("1m", "5m", "15m") if timeframe == "all" else (timeframe,)
+    if any(JOBS.get(f"{asset}@{tf}", {}).get("status") in ("queued", "running") for tf in tfs):
+        return {"status": "running", "asset": asset}
+    async def go():
+        for tf in tfs:
+            JOBS[f"{asset}@{tf}"] = {"status": "queued", "ts": now_ms()}
+            await _run(user["id"], asset, max(7, min(days, 90)), timeframe=tf)
+    asyncio.create_task(go())
+    return {"status": "queued", "asset": asset, "timeframes": list(tfs)}
 
 
 @r.get("/status")
@@ -100,19 +107,21 @@ async def status(user=Depends(current_user)):
 
 @r.get("/latest")
 async def latest(user=Depends(current_user)):
+    import strategy
     out = {}
     for a in ("BTC", "ETH", "SOL"):
-        doc = await db.promotions.find_one({"strategy": "luchii003", "asset": a, "status": {"$in": ["PROMOTE", "REJECT"]}}, {"_id": 0}, sort=[("ts", -1)])
-        if doc:
-            ok, why = await registry.is_promoted("luchii003", a)
-            rep = doc.pop("report", {}) or {}
-            out[a] = {**doc, "live_allowed": ok, "live_reason": why, "backtest": rep.get("backtest"), "monte_carlo": rep.get("monte_carlo"), "stress": rep.get("stress"),
-                      "benchmark": rep.get("benchmark"), "execution": rep.get("execution"), "health": rep.get("health"), "checks": rep.get("promotion", {}).get("checks"),
-                      "equity_curve": rep.get("equity_curve"), "drawdown_curve": rep.get("drawdown_curve"), "replay_ok": rep.get("replay_ok"), "events": rep.get("events"),
-                      "candles": rep.get("candles"), "days": rep.get("days"), "runtime_s": rep.get("runtime_s")}
-        else:
-            out[a] = {"status": "NONE", "live_allowed": False, "live_reason": "no promotion run yet"}
-    return {"strategy": "luchii003", "assets": out, "history": await registry.history("luchii003", 20)}
+        ok, why = await registry.is_promoted("luchii003", a)
+        tfs = {}
+        for tf in ("1m", "5m", "15m"):
+            doc = await db.promotions.find_one({"strategy": "luchii003", "asset": a, "timeframe": tf, "status": {"$in": ["PROMOTE", "REJECT"]}}, {"_id": 0}, sort=[("ts", -1)])
+            if doc:
+                rep = doc.pop("report", {}) or {}
+                tfs[tf] = {**doc, "backtest": rep.get("backtest"), "monte_carlo": rep.get("monte_carlo"), "stress": rep.get("stress"), "benchmark": rep.get("benchmark"),
+                           "execution": rep.get("execution"), "health": rep.get("health"), "checks": rep.get("promotion", {}).get("checks"), "equity_curve": rep.get("equity_curve"),
+                           "drawdown_curve": rep.get("drawdown_curve"), "replay_ok": rep.get("replay_ok"), "events": rep.get("events"), "candles": rep.get("candles"), "days": rep.get("days"), "runtime_s": rep.get("runtime_s")}
+        best = max(tfs.values(), key=lambda d: (d["status"] == "PROMOTE", d.get("score", 0), d["ts"]), default=None)
+        out[a] = {**(best or {"status": "NONE"}), "live_allowed": ok, "live_reason": why, "timeframes": {tf: {"status": d["status"], "score": d.get("score"), "ts": d["ts"]} for tf, d in tfs.items()}}
+    return {"strategy": "luchii003", "active_timeframe": strategy.ACTIVE_TF["tf"], "assets": out, "history": await registry.history("luchii003", 20)}
 
 
 class RollbackIn(BaseModel):

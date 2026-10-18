@@ -30,16 +30,22 @@ def _candles(resp) -> list:
 
 
 async def refresh(c: httpx.AsyncClient):
+    import strategy
+    step = strategy.TIMEFRAMES.get(strategy.ACTIVE_TF["tf"], 1)
     reqs = [c.get(f"{CB}/{a}-USD/ticker") for a in ASSETS] + \
            [c.get(f"{CB}/{a}-USD/candles", params={"granularity": 60}) for a in ASSETS] + \
-           [c.get(f"{CB}/BTC-USD/book", params={"level": 2})]
+           [c.get(f"{CB}/BTC-USD/book", params={"level": 2})] + \
+           ([c.get(f"{CB}/{a}-USD/candles", params={"granularity": step * 60}) for a in ASSETS] if step > 1 else [])
     res = await asyncio.gather(*reqs)
     n = len(ASSETS)
     markets = {}
     for i, a in enumerate(ASSETS):
         candles = _candles(res[n + i])
         markets[a] = {"price": float(res[i].json()["price"]), "candles": candles, "rsi": rsi([x["c"] for x in candles])}
-    book = res[-1].json()
+        if step > 1:
+            tf = _candles(res[2 * n + 1 + i])
+            markets[a]["tf_candles"], markets[a]["tf_rsi"], markets[a]["tf"] = tf, rsi([x["c"] for x in tf]), strategy.ACTIVE_TF["tf"]
+    book = res[2 * n].json()
     SNAPSHOT.update({
         "price": markets["BTC"]["price"], "eth": markets["ETH"]["price"], "sol": markets["SOL"]["price"],
         "candles": markets["BTC"]["candles"], "rsi": markets["BTC"]["rsi"], "markets": markets,

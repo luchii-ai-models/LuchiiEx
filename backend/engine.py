@@ -111,10 +111,15 @@ def luchii_signal(bot: dict, asset: str) -> dict:
 
 
 def snapshot(asset: str) -> tuple:
-    """(indicators for asset, indicators for BTC) — empty dicts while warming up."""
+    """(indicators for asset, indicators for BTC) on the promoted timeframe — empty dicts while warming up."""
     m, b = mkt(asset), mkt("BTC")
-    i = strategy.indicators(m["candles"], m["price"], m.get("rsi")) if m.get("candles") else {}
-    bi = strategy.indicators(b["candles"], b["price"], b.get("rsi")) if b.get("candles") else {}
+    tf = strategy.ACTIVE_TF["tf"]
+    def ind(mm):
+        if tf != "1m" and mm.get("tf") == tf and len(mm.get("tf_candles") or []) >= 60:
+            return strategy.indicators(mm["tf_candles"], mm["price"], mm.get("tf_rsi"))
+        return strategy.indicators(mm["candles"], mm["price"], mm.get("rsi"))
+    i = ind(m) if m.get("candles") else {}
+    bi = ind(b) if b.get("candles") else {}
     return i, bi
 
 

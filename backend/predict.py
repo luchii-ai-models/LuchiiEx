@@ -72,6 +72,7 @@ async def place(uid: str, asset: str, direction: str, stake, duration: int, idem
     cid = idem or str(uuid.uuid4())
     if existing := await db.predict_contracts.find_one({"id": cid}, {"_id": 0}):
         return existing
+    await ensure_funds(uid, amt)
     je = await ledger.post_journal([{"account": ledger.user_code(uid, "USD"), "debit": amt}, {"account": "PREDICT_ESCROW_USD", "credit": amt}],
                                    source="PREDICT", description=f"Predict {asset} {direction} {duration}s stake ${amt}", reference_type="PREDICT_STAKE",
                                    reference_id=cid, idempotency_key=f"predict:stake:{cid}", actor_id=uid)
@@ -121,8 +122,42 @@ async def worker():
         await asyncio.sleep(1)
 
 
-# ---------- AI auto-predict: works from $1, keeps going when funds are too small for exchange trading ----------
-AUTO_CONF, AUTO_DURATION, AUTO_STAKE_PCT, AUTO_MAX_STAKE, DAILY_LOSS_PCT = 0.80, 60, Decimal("0.02"), Decimal("5"), Decimal("0.05")
+# ---------- AI auto-predict: uses every dollar already in the system (ledger USD + exchange equity), 3s contracts ----------
+AUTO_CONF, AUTO_DURATION = 0.80, int(os.environ.get("PREDICT_AUTO_DURATION", "3"))
+AUTO_STAKE_PCT, AUTO_MAX_STAKE, DAILY_LOSS_PCT = Decimal(os.environ.get("PREDICT_AUTO_STAKE_PCT", "1.0")), MAX_STAKE, Decimal(os.environ.get("PREDICT_DAILY_LOSS_PCT", "0.25"))
+MIRROR_ACCOUNT = ("EXCHANGE_MIRROR_USD", "User exchange equity mirrored for Predict", "ASSET", "USD")
+
+
+async def mirrored(uid: str) -> Decimal:
+    rows = await db.journal_entries.find({"reference_type": "EXCHANGE_MIRROR", "actor_id": uid}, {"_id": 0, "amount": 1}).to_list(5000)
+    return sum((Decimal(str(r.get("amount") or 0)) for r in rows), Decimal(0))
+
+
+async def ensure_funds(uid: str, need: Decimal) -> Decimal:
+    """Top the USD ledger wallet up from the user's exchange equity (OKX balance already in the system). Returns available after."""
+    wallets = {w["currency"]: w for w in await ledger.user_wallets(uid)}
+    avail = Decimal(str((wallets.get("USD") or {}).get("available", 0)))
+    if avail >= need:
+        return avail
+    bot = await db.bots.find_one({"user_id": uid}, {"_id": 0, "live_equity": 1})
+    room = Decimal(str((bot or {}).get("live_equity") or 0)).quantize(Decimal("0.01")) - await mirrored(uid)
+    top = min(room, (need - avail).quantize(Decimal("0.01")))
+    if top <= 0:
+        return avail
+    await db.ledger_accounts.update_one({"code": MIRROR_ACCOUNT[0]}, {"$setOnInsert": {"id": str(uuid.uuid4()), "code": MIRROR_ACCOUNT[0], "name": MIRROR_ACCOUNT[1], "account_type": "ASSET",
+                                                                                      "currency": "USD", "user_id": None, "created_at": now_ms()}}, upsert=True)
+    ref = str(uuid.uuid4())
+    je = await ledger.post_journal([{"account": MIRROR_ACCOUNT[0], "debit": top}, {"account": ledger.user_code(uid, "USD"), "credit": top}], source="SYSTEM",
+                                   description=f"Mirror ${top} exchange equity into Predict wallet", reference_type="EXCHANGE_MIRROR", reference_id=ref, idempotency_key=f"mirror:{ref}", actor_id=uid)
+    await db.journal_entries.update_one({"id": je["id"]}, {"$set": {"amount": str(top)}})
+    return avail + top
+
+
+async def total_funds(uid: str) -> Decimal:
+    wallets = {w["currency"]: w for w in await ledger.user_wallets(uid)}
+    avail = Decimal(str((wallets.get("USD") or {}).get("available", 0)))
+    bot = await db.bots.find_one({"user_id": uid}, {"_id": 0, "live_equity": 1})
+    return avail + max(Decimal(0), Decimal(str((bot or {}).get("live_equity") or 0)) - await mirrored(uid))
 
 
 def ai_direction(asset: str) -> tuple[str | None, float]:
@@ -155,8 +190,7 @@ async def auto_tick():
         uid = bot["user_id"]
         if bot.get("kill_switch"):
             continue
-        wallets = {w["currency"]: w for w in await ledger.user_wallets(uid)}
-        avail = Decimal(str((wallets.get("USD") or {}).get("available", 0)))
+        avail = await total_funds(uid)
         if avail < MIN_STAKE:
             continue
         if await _daily_net(uid) <= -max(Decimal("2"), avail * DAILY_LOSS_PCT):
@@ -169,6 +203,7 @@ async def auto_tick():
                 continue
             stake = max(MIN_STAKE, min(AUTO_MAX_STAKE, (avail * AUTO_STAKE_PCT).quantize(Decimal("0.01")), avail))
             try:
+                await ensure_funds(uid, stake)
                 c = await place(uid, asset, direction, stake, AUTO_DURATION)
                 await db.predict_contracts.update_one({"id": c["id"]}, {"$set": {"auto": True, "aiConfidence": round(conf, 3)}})
                 from engine import log as elog

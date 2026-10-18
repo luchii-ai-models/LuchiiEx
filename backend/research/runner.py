@@ -93,12 +93,14 @@ class BacktestRunnerV2:
                               "fees_paid": float(cost)}}
 
 
-def validation_job(asset: str, days: int = 30, cash: float = 10000.0) -> dict:
-    """Blocking: runs in a worker process. Returns the full promotion report."""
+def validation_job(asset: str, days: int = 30, cash: float = 10000.0, timeframe: str = "1m") -> dict:
+    """Blocking: runs in a worker process. Returns the full promotion report for one (asset, timeframe)."""
     t0 = time.time()
+    step = strategy.TIMEFRAMES[timeframe]
     bars = min(3000 * max(1, days // 2), 43200)
-    cs = fetch_candles(asset, bars)
-    btc = cs if asset == "BTC" else fetch_candles("BTC", bars)
+    cs1 = fetch_candles(asset, bars)
+    btc1 = cs1 if asset == "BTC" else fetch_candles("BTC", bars)
+    cs, btc = strategy.resample_ohlcv(cs1, step), strategy.resample_ohlcv(btc1, step)
     bench = {"BTC": [c["c"] for c in btc]}
     if asset != "BTC":
         bench[asset] = [c["c"] for c in cs]
@@ -110,7 +112,7 @@ def validation_job(asset: str, days: int = 30, cash: float = 10000.0) -> dict:
     prices = {"BTC": btc[-1]["c"], asset: cs[-1]["c"]}
     stress = run_all(fully_invested_ledger(r["equity"][-1], {asset: 0.5, "BTC": 0.5} if asset != "BTC" else {"BTC": 1.0}, prices))
     bm = benchmark_report(r["equity"], bench)
-    report = {"strategy": "luchii003", "version": STRATEGY_VERSION, "asset": asset, "days": days, "candles": len(cs), "cash": cash,
+    report = {"strategy": "luchii003", "version": f"{STRATEGY_VERSION}@{timeframe}", "timeframe": timeframe, "asset": asset, "days": days, "candles": len(cs), "cash": cash,
               "backtest": met.dict(), "monte_carlo": mc.__dict__, "stress": stress, "benchmark": bm, "execution": r["execution"],
               "events": r["events"], "replay_ok": r["replay_ok"], "blocked_entries": r["blocked_entries"], "regimes": {x: r["regimes"].count(x) for x in set(r["regimes"])},
               "equity_curve": r["equity"][:: max(1, len(r["equity"]) // 300)], "drawdown_curve": drawdown_series(r["equity"])[:: max(1, len(r["equity"]) // 300)],

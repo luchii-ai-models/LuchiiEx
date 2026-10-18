@@ -147,6 +147,21 @@ def resample(candles: list, step: int) -> list:
     return [candles[i + step - 1]["c"] for i in range(0, full, step)]
 
 
+def resample_ohlcv(candles: list, step: int) -> list:
+    """1m OHLCV → step-minute OHLCV bars (last partial bucket dropped)."""
+    if step <= 1:
+        return candles
+    out = []
+    for i in range(0, len(candles) // step * step, step):
+        w = candles[i:i + step]
+        out.append({"t": w[0].get("t"), "o": w[0]["o"], "h": max(c["h"] for c in w), "l": min(c["l"] for c in w), "c": w[-1]["c"], "v": sum(c["v"] for c in w)})
+    return out
+
+
+TIMEFRAMES = {"1m": 1, "5m": 5, "15m": 15}
+ACTIVE_TF = {"tf": "1m"}  # set by the promotion registry; engine evaluates signals on this candle size
+
+
 def mtf_trend(candles: list) -> dict:
     out = {}
     for tf, step in (("1m", 1), ("5m", 5), ("15m", 15)):
