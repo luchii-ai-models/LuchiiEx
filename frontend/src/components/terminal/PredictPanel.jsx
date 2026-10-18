@@ -26,6 +26,12 @@ export default function PredictPanel() {
   return (
     <div className="space-y-3" data-testid="predict-panel">
       <div className="text-[10px] text-neon-amber border border-neon-amber/40 rounded p-2" data-testid="predict-notice">{st.notice}{!st.enabled && " · DISABLED ON THIS SERVER (PREDICT_ENABLED)"}</div>
+      {st.enabled && (
+        <div className="text-[10px] border border-neon-green/40 rounded p-2 text-neon-green" data-testid="auto-predict-status">
+          AI AUTO-PREDICT {st.autoPredict ? "ON" : "OFF"} · places {st.autoRules.duration}s contracts on its own when conviction ≥ {Math.round(st.autoRules.minConfidence * 100)}% · stake {st.autoRules.stakePct * 100}% of wallet (max ${st.autoRules.maxStake}) · stops after a {st.autoRules.dailyLossPct * 100}% daily loss · works from $1
+          {Object.entries(st.quotes).some(([, q]) => q.aiSignal) && <div className="text-white mt-1">signal now: {Object.entries(st.quotes).filter(([, q]) => q.aiSignal).map(([a, q]) => `${a} ${q.aiSignal}`).join(" · ")}</div>}
+        </div>
+      )}
       <div className="flex flex-wrap gap-1">
         {st.assets.map((a) => <button key={a} data-testid={`predict-asset-${a}`} onClick={() => setAsset(a)} className={`text-[10px] px-2 py-1 border ${asset === a ? "border-neon-cyan text-neon-cyan" : "border-term-border text-term-muted"}`}>{a}</button>)}
         <span className="text-[10px] text-term-muted self-center ml-2 tnum">${q.price?.toLocaleString()} · AI conf {Math.round((q.confidence || 0) * 100)}%</span>

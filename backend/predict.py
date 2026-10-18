@@ -119,3 +119,70 @@ async def worker():
             import logging
             logging.getLogger("predict").warning("settle loop: %s", e)
         await asyncio.sleep(1)
+
+
+# ---------- AI auto-predict: works from $1, keeps going when funds are too small for exchange trading ----------
+AUTO_CONF, AUTO_DURATION, AUTO_STAKE_PCT, AUTO_MAX_STAKE, DAILY_LOSS_PCT = 0.80, 60, Decimal("0.02"), Decimal("5"), Decimal("0.05")
+
+
+def ai_direction(asset: str) -> tuple[str | None, float]:
+    """UP when the long-side conviction model is ≥ 0.80; DOWN on the mirrored bearish setup; else no contract."""
+    from engine import snapshot
+    import strategy
+    i, bi = snapshot(asset)
+    if not i or not bi or strategy.nan(i.get("ema9"), i.get("ema21"), i.get("rsi"), i.get("adx"), i.get("volume_ratio")):
+        return None, 0.0
+    conf = strategy.confidence(i, bi)
+    if conf >= AUTO_CONF and i["regime"] != "CHOP":
+        return "UP", conf
+    bear = (0.30 if i["ema9"] < i["ema21"] else 0) + (0.20 if i["rsi"] < 40 else 0) + (0.20 if i["volume_ratio"] > 1.5 else 0) \
+        + (0.15 if bi.get("price", 0) < (bi.get("ema200") or 0) else 0) + (0.15 if i["adx"] > 30 else 0)
+    if bear >= AUTO_CONF and i["regime"] != "CHOP":
+        return "DOWN", round(bear, 2)
+    return None, max(conf, bear)
+
+
+async def _daily_net(uid: str) -> Decimal:
+    since = now_ms() - 86_400_000
+    rows = await db.predict_contracts.find({"user_id": uid, "settledAt": {"$gte": since}}, {"_id": 0, "stake": 1, "payout": 1}).to_list(2000)
+    return sum((Decimal(str(r.get("payout") or 0)) - Decimal(str(r["stake"])) for r in rows), Decimal(0))
+
+
+async def auto_tick():
+    if not enabled():
+        return
+    async for bot in db.bots.find({"status": {"$in": ["running", "stopped"]}, "auto_predict": {"$ne": False}}, {"_id": 0, "user_id": 1, "kill_switch": 1}):
+        uid = bot["user_id"]
+        if bot.get("kill_switch"):
+            continue
+        wallets = {w["currency"]: w for w in await ledger.user_wallets(uid)}
+        avail = Decimal(str((wallets.get("USD") or {}).get("available", 0)))
+        if avail < MIN_STAKE:
+            continue
+        if await _daily_net(uid) <= -max(Decimal("2"), avail * DAILY_LOSS_PCT):
+            continue
+        for asset in ASSETS:
+            if await db.predict_contracts.find_one({"user_id": uid, "asset": asset, "status": "OPEN"}, {"_id": 1}):
+                continue
+            direction, conf = ai_direction(asset)
+            if not direction:
+                continue
+            stake = max(MIN_STAKE, min(AUTO_MAX_STAKE, (avail * AUTO_STAKE_PCT).quantize(Decimal("0.01")), avail))
+            try:
+                c = await place(uid, asset, direction, stake, AUTO_DURATION)
+                await db.predict_contracts.update_one({"id": c["id"]}, {"$set": {"auto": True, "aiConfidence": round(conf, 3)}})
+                from engine import log as elog
+                await elog(db, uid, {"action": "HOLD", "engine": "predict", "confidence": conf,
+                                     "reason": f"[{asset}] AI PREDICT {direction} · ${stake} for {AUTO_DURATION}s @ {c['multiplier']}x · conviction {conf * 100:.0f}%"}, c["entryPrice"], asset=asset)
+            except ledger.LedgerError:
+                continue
+
+
+async def auto_worker():
+    while True:
+        try:
+            await auto_tick()
+        except Exception as e:  # noqa: BLE001
+            import logging
+            logging.getLogger("predict").warning("auto loop: %s", e)
+        await asyncio.sleep(15)

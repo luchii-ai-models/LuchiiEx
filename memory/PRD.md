@@ -190,3 +190,7 @@ User choices: copy from trade-bridge-73; use the env values exactly; no Emergent
 - strategy.production_guard() shared by live engine and backtest (same 13 checks).
 - Risk page /risk (header shield icon) replaces the Streamlit dashboard (single-ingress env). First honest result ETH 7d: REJECT (18 trades, PF 0.18, Sharpe −0.7; guard blocked 49 entries). Live trading stays blocked until a PROMOTE.
 - Luchii Predict (backend/predict.py, Settings → PREDICT): UP/DOWN 3s–5m, stake $1–100, payout 1.80–2.10x by AI confidence, escrow/house ledger accounts, 1s settlement worker, idempotent place/settle, liability cap $2000. Gated by PREDICT_ENABLED (currently false) — regulatory. Verified WON/LOST/escrow accounting.
+
+## 2026-10-18 · Predict LIVE + AI auto-predict
+- PREDICT_ENABLED=true. predict.auto_worker (15s): for every bot with auto_predict≠false, if USD wallet ≥ $1 and daily Predict net > −max($2, 5% wallet): per asset with no open contract, ai_direction() → UP when confidence ≥0.80 (non-CHOP), DOWN on mirrored bearish score ≥0.80; stake 2% wallet clamped $1–$5, 60s, logged to bot log as engine=predict. Status/rules exposed in /api/predict/status and PredictPanel.
+- Caveat: Luchii house is counterparty; AI wins for users are house losses (zero-sum inside platform). Liability cap $2000.
