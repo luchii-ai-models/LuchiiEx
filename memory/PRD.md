@@ -141,3 +141,6 @@ User choices: copy from trade-bridge-73; use the env values exactly; no Emergent
 ## 2026-10-18 · Wallet QR polish
 - AddrQR stacks vertically on <640px; wallet form grids collapse to one column on phones.
 - SAVE PNG (512px canvas export) and SHARE (Web Share API with file; falls back to copying the address) buttons on every QR block. Verified at 390px with a real download.
+
+## 2026-10-18 · Strategy toggle on ACTIVE card
+- BotStatusCard `StrategyToggle` (data-testid strategy-toggle) flips strategy via POST /bot/config {strategy, aggressive}; backend logs "strategy switched → …". Verified round-trip in browser; applies to next entry only, open positions still managed.

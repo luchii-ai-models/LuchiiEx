@@ -272,6 +272,9 @@ async def bot_config(body: ConfigIn, user=Depends(current_user)):
         bad("Live mode needs a connected exchange")
     if upd:
         await set_bot(user["id"], **upd)
+        if "strategy" in upd:
+            await engine.log(db, user["id"], {"action": "HOLD", "engine": "system", "confidence": 1.0,
+                                              "reason": f"strategy switched → {'AGGRESSIVE SCALP' if upd['strategy'] == 'aggressive' else 'LUCHII_003'} · applies to next entry · open positions still managed"}, SNAPSHOT.get("price"))
     return await bot_view(await get_bot(user))
 
 
