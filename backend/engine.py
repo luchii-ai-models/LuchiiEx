@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import alerts
 import audit
 import brokers
+import ledger
 import strategy
 from db import db, now_ms
 from exchange_service import (all_balances, cancel_stop, client_from_doc, ensure_funds, friendly, market_order, place_oco, place_stop,
@@ -296,6 +297,12 @@ async def record_fill(bot: dict, side: str, price: float, qty: float, fill: str,
     await set_bot(uid, **upd)
     await db.bot_trades.insert_one({"user_id": uid, "ts": now_ms(), "side": side, "asset": asset, "price": price, "qty": qty, "pnl": pnl,
                                     "strategy": bot.get("strategy", "luchii003")})
+    if bot["mode"] == "live" and side == "SELL":
+        try:
+            rate = float(bot.get("fee_rate") or 0.001)
+            await ledger.record_trade_pnl(uid, f"{uid}:{asset}:{now_ms()}", pnl, round((pos["entry_price"] + price) * qty * rate, 6), asset, side, qty, price)
+        except Exception as e:  # noqa: BLE001
+            log.warning("ledger posting skipped: %s", e)
     if side == "BUY":
         i, bi = snapshot(asset)
         await audit.open_trade(bot, asset, price, qty, d, i, bi)

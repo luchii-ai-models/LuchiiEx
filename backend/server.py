@@ -17,9 +17,12 @@ from starlette.middleware.cors import CORSMiddleware  # noqa: E402
 import alerts  # noqa: E402
 import brokers  # noqa: E402
 import engine  # noqa: E402
+import ledger  # noqa: E402
+import ledger_routes  # noqa: E402
 import market  # noqa: E402
 import pocket  # noqa: E402
 import solana_dex  # noqa: E402
+import webhooks  # noqa: E402
 from auth import (check_lockout, clear_fails, create_token, current_user, hash_password, public_user,  # noqa: E402
                   record_fail, seed_admin, verify_password)
 from db import db, now_ms  # noqa: E402
@@ -63,6 +66,7 @@ async def register(body: RegisterIn):
     r = await db.users.insert_one({"email": email, "password_hash": hash_password(body.password),
                                    "name": body.name.strip() or email.split("@")[0], "role": "user", "created_at": iso_now()})
     u = await db.users.find_one({"_id": r.inserted_id})
+    await ledger.provision_user(str(u["_id"]))
     return {"token": create_token(str(u["_id"]), email), "user": public_user(u)}
 
 
@@ -592,6 +596,10 @@ async def wallet_withdraw(body: WithdrawIn, user=Depends(current_user)):
         r = await ex.withdraw(body.currency.upper(), body.amount, body.address.strip(), body.tag or None, params)
         return {"ok": True, "id": r.get("id"), "status": r.get("status")}
     res = await with_exchange(user["id"], run)
+    try:
+        await ledger.record_withdrawal(user["id"], body.currency, body.amount, str(res.get("id") or f"{user['id']}:{now_ms()}"), body.address.strip())
+    except ledger.LedgerError as e:
+        logging.warning("withdrawal ledger posting skipped: %s", e)
     await alerts.notify(await get_bot(user), f"📤 Withdrawal submitted: {body.amount} {body.currency.upper()} → {body.address[:10]}…")
     return res
 
@@ -623,7 +631,14 @@ async def wallet_history(user=Depends(current_user)):
             except Exception:
                 pass
         return sorted(out, key=lambda x: x["ts"] or 0, reverse=True)
-    return await with_exchange(user["id"], run)
+    rows = await with_exchange(user["id"], run)
+    for t in rows:  # mirror confirmed exchange deposits into the ledger, idempotent on txid
+        if t["type"] == "deposit" and t.get("status") == "ok" and t.get("txid") and t.get("amount") and (t.get("currency") or "").upper() in ledger.USER_CCY:
+            try:
+                await ledger.record_deposit(user["id"], t["currency"], t["amount"], t["txid"], txid=t["txid"])
+            except ledger.LedgerError:
+                pass
+    return rows
 
 
 class Web3In(BaseModel):
@@ -1016,6 +1031,8 @@ async def root():
 
 
 app.include_router(api)
+api.include_router(ledger_routes.r)
+app.include_router(ledger_routes.r, prefix="/api")
 app.add_middleware(CORSMiddleware, allow_origins=os.environ["CORS_ORIGINS"].split(","), allow_credentials=False,
                    allow_methods=["*"], allow_headers=["*"])
 
@@ -1023,6 +1040,11 @@ app.add_middleware(CORSMiddleware, allow_origins=os.environ["CORS_ORIGINS"].spli
 @app.on_event("startup")
 async def startup():
     await seed_admin()
+    await ledger.ensure_indexes()
+    await ledger.seed_system_accounts()
+    async for u in db.users.find({}, {"_id": 1}):
+        await ledger.provision_user(str(u["_id"]))
+    asyncio.create_task(webhooks.worker())
     await db.bots.create_index("user_id", unique=True)
     await db.bot_logs.create_index([("user_id", 1), ("ts", -1)])
     await db.bot_trades.create_index([("user_id", 1), ("ts", -1)])

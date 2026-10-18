@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { X, Link2, AlertTriangle, Unplug, Bell, Shield, Wallet, Sliders, Send, Server, Radio, Coins, MessageSquare, HelpCircle, Sun, Moon } from "lucide-react";
+import { X, Link2, AlertTriangle, Unplug, Bell, Shield, Wallet, Sliders, Send, Server, Radio, Coins, HelpCircle, Sun, Moon, BookOpen } from "lucide-react";
+import LedgerTab from "./LedgerTab";
+import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../context/ThemeContext";
 import { useNavigate } from "react-router-dom";
 import api, { formatApiErrorDetail } from "../../lib/api";
@@ -17,9 +19,11 @@ const TABS = [
   ["wallet", "WALLET", Wallet],
   ["exchange", "EXCHANGE", Link2],
   ["solana", "SOLANA DEX", Coins],
+  ["ledger", "LEDGER · PROFILE", BookOpen],
 ];
 
 export default function SettingsModal({ bot, onClose, refresh, initialTab = "config" }) {
+  const { user } = useAuth();
   const [tab, setTab] = useState(initialTab);
   const navigate = useNavigate();
   const { theme, toggle } = useTheme();
@@ -44,8 +48,6 @@ export default function SettingsModal({ bot, onClose, refresh, initialTab = "con
           </select>
           <button data-testid="theme-toggle-button" onClick={toggle} title="Toggle theme"
             className="text-term-muted hover:text-neon-amber transition-colors">{theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}</button>
-          <button data-testid="open-chat-button" onClick={() => navigate("/chat")} title="Luchii chat"
-            className="text-term-muted hover:text-neon-magenta transition-colors"><MessageSquare size={16} /></button>
           <button data-testid="open-help-button" onClick={() => navigate("/help")} title="Help center"
             className="text-term-muted hover:text-neon-cyan transition-colors"><HelpCircle size={16} /></button>
         </div>
@@ -55,6 +57,7 @@ export default function SettingsModal({ bot, onClose, refresh, initialTab = "con
           {tab === "guardrails" && <GuardrailsTab bot={bot} refresh={refresh} />}
           {tab === "brokers" && <BrokersTab refresh={refresh} />}
           {tab === "alerts" && <AlertsTab bot={bot} refresh={refresh} />}
+          {tab === "ledger" && <LedgerTab user={user} />}
           {tab === "wallet" && <WalletTab bot={bot} refresh={refresh} connected={connected} goExchange={goExchange} />}
           {tab === "exchange" && <ExchangeTab bot={bot} refresh={refresh} connected={connected} preset={preset} />}
           {tab === "solana" && <SolanaTab />}
