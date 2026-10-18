@@ -22,11 +22,11 @@ DEFAULT_BOT = {
     "manual_confirm": False, "kill_switch": False, "cash": START_CASH, "position_qty": 0.0, "entry_price": 0.0,
     "realized_pnl": 0.0, "trades_count": 0, "wins": 0, "losses": 0, "alerts_enabled": True, "live_equity": None,
     "last_tick": 0, "pocketoption": None, "auto_fund": True, "start_equity": None, "start_ts": None,
-    "take_profit_pct": 0.6, "stop_loss_pct": 0.4, "trend_filter": True, "volume_filter": True, "trailing_stop": True, "peak_price": 0.0,
+    "take_profit_pct": 1.2, "stop_loss_pct": 0.4, "trend_filter": True, "volume_filter": True, "trailing_stop": True, "peak_price": 0.0,
     "partial_tp": True, "tp_taken": False, "aggressive": True, "size_pct": 50.0, "assets": ["BTC", "ETH", "SOL"], "alt_positions": {},
     "strategy": "luchii003", "stop_price": 0.0, "tiers_done": 0, "entry_atr": 0.0,
 }
-BOOST_DEFAULTS = {"take_profit_pct": 0.6, "stop_loss_pct": 0.4, "aggressive": True, "size_pct": 50.0, "assets": ["BTC", "ETH", "SOL"]}
+BOOST_DEFAULTS = {"take_profit_pct": 1.2, "stop_loss_pct": 0.4, "aggressive": True, "size_pct": 50.0, "assets": ["BTC", "ETH", "SOL"]}
 LUCHII003_DEFAULTS = {"strategy": "luchii003", "assets": ["BTC", "ETH", "SOL"]}
 
 
@@ -118,22 +118,68 @@ def snapshot(asset: str) -> tuple:
     return i, bi
 
 
+GUARD = {"adx_min": 25, "vol_min": 1.5, "conf_min": 0.80, "score_min": 80, "rsi_min": 55, "loss_cooldown_s": 1800, "streak_pause_n": 3, "streak_pause_s": 3600,
+         "min_notional": 50.0, "max_spread_pct": 0.05, "min_book_imbalance": 1.25, "min_vol24h_usd": 5_000_000}
+
+
+def loss_cooldown(bot: dict) -> str | None:
+    now = time.time()
+    if bot.get("loss_streak", 0) >= GUARD["streak_pause_n"] and now - bot.get("last_loss_ts", 0) < GUARD["streak_pause_s"]:
+        return f"{bot['loss_streak']} losses in a row · paused {round((GUARD['streak_pause_s'] - (now - bot['last_loss_ts'])) / 60)} min"
+    if now - bot.get("last_loss_ts", 0) < GUARD["loss_cooldown_s"]:
+        return f"loss cooldown · {round((GUARD['loss_cooldown_s'] - (now - bot['last_loss_ts'])) / 60)} min left"
+    return None
+
+
 def entry_guard(bot: dict, asset: str, d: dict):
-    """Hard production filters for every long entry (both strategies). Returns a rejection reason or None."""
+    """Hard production filters for every long entry (both strategies, no bypass). Returns a rejection reason or None."""
     i, bi = snapshot(asset)
     if not i or not bi:
         return "market data warming up"
-    if strategy.nan(i["adx"], i["rsi"], i["volume_ratio"], bi["ema200"], bi["rsi"], bi["trend_pct"]):
+    if strategy.nan(i["adx"], i["rsi"], i["volume_ratio"], i.get("ema9"), i.get("ema21"), i.get("vwap"), i["atr"], i["atr_ma"], bi["ema200"], bi["rsi"], bi["trend_pct"]):
         return "indicators warming up"
+    cd = loss_cooldown(bot)
+    if cd:
+        return cd
     score = d.get("score") if d.get("score") is not None else strategy.entry_score(i)[0]
-    conf = d.get("confidence") or 0
-    checks = [(i["adx"] >= 25, f"ADX {i['adx']:.0f} < 25"), (i["rsi"] < 70, f"RSI {i['rsi']:.0f} ≥ 70"),
-              (i["volume_ratio"] >= 1.2, f"volume {i['volume_ratio']:.2f}x < 1.2"), (score >= 70, f"score {score} < 70"),
-              (conf >= 0.7, f"confidence {conf * 100:.0f}% < 70%")]
+    conf = strategy.confidence(i, bi)
+    d["confidence"] = conf
+    mtf = i.get("mtf") or {}
+    g = GUARD
+    checks = [(i.get("regime") != "CHOP", "CHOP regime"), (i["adx"] >= g["adx_min"], f"ADX {i['adx']:.0f} < {g['adx_min']}"),
+              (i["ema9"] > i["ema21"], "EMA9 ≤ EMA21"), (i["price"] > i["vwap"], "price below VWAP"),
+              (g["rsi_min"] < i["rsi"] < 70, f"RSI {i['rsi']:.0f} outside {g['rsi_min']}-70"),
+              (i["volume_ratio"] >= g["vol_min"], f"volume {i['volume_ratio']:.2f}x < {g['vol_min']}"), (i["atr"] > i["atr_ma"], "ATR not expanding"),
+              (all(mtf.get(tf) for tf in ("1m", "5m", "15m")), "5m/15m trend not aligned"),
+              (score >= g["score_min"], f"score {score} < {g['score_min']}"), (conf >= g["conf_min"], f"confidence {conf * 100:.0f}% < {g['conf_min'] * 100:.0f}%")]
     if asset != "BTC":
-        checks += [(bi["price"] > bi["ema200"], "BTC below EMA200"), (bi["rsi"] > 50, f"BTC RSI {bi['rsi']:.0f} ≤ 50"), (bi["trend_pct"] > 0, "BTC trend negative")]
+        checks += [(bi["price"] > bi["ema200"], "BTC below EMA200"), (bi["rsi"] > 45, f"BTC RSI {bi['rsi']:.0f} ≤ 45"), (bi["trend_pct"] > 0, "BTC trend negative")]
     failed = [msg for ok, msg in checks if not ok]
     return " · ".join(failed) if failed else None
+
+
+async def liquidity_guard(ex, symbol: str, usd: float) -> str | None:
+    """Exchange-side checks right before the order: notional, spread, book imbalance, 24h volume."""
+    g = GUARD
+    if usd < g["min_notional"]:
+        return f"${usd:.0f} below ${g['min_notional']:.0f} minimum notional (fees would dominate)"
+    try:
+        ob = await ex.fetch_order_book(symbol, 5)
+        bid, ask = float(ob["bids"][0][0]), float(ob["asks"][0][0])
+        spread = (ask - bid) / bid * 100
+        if spread > g["max_spread_pct"]:
+            return f"spread {spread:.3f}% > {g['max_spread_pct']}%"
+        bids, asks = sum(float(b[1]) for b in ob["bids"]), sum(float(a[1]) for a in ob["asks"])
+        imb = bids / asks if asks else 0
+        if imb < g["min_book_imbalance"]:
+            return f"book imbalance {imb:.2f} < {g['min_book_imbalance']} (sellers dominate)"
+        t = await ex.fetch_ticker(symbol)
+        v24 = float(t.get("quoteVolume") or 0) or float(t.get("baseVolume") or 0) * float(t.get("last") or 0)
+        if v24 and v24 < g["min_vol24h_usd"]:
+            return f"24h volume ${v24 / 1e6:.1f}M < ${g['min_vol24h_usd'] / 1e6:.0f}M"
+    except Exception as e:  # noqa: BLE001
+        return f"liquidity check failed · {str(e)[:80]}"
+    return None
 
 
 def risk_multiplier(pf, pf_inf: bool) -> float:
@@ -145,13 +191,8 @@ def risk_multiplier(pf, pf_inf: bool) -> float:
 
 
 def decide(bot: dict, asset: str) -> dict:
-    if bot.get("strategy", "luchii003") == "aggressive":
-        d = signal(bot, asset)
-        if d.get("action") == "BUY":
-            d["regime"] = snapshot(asset)[0].get("regime", "CHOP")
-            d["reason"] += " · AGGRESSIVE: regime/score/BTC filters bypassed by owner choice"
-        return d
-    d = luchii_signal(bot, asset)
+    agg = bot.get("strategy", "luchii003") == "aggressive"
+    d = signal(bot, asset) if agg else luchii_signal(bot, asset)
     if d.get("action") == "BUY":
         if "regime" not in d:
             i, _ = snapshot(asset)
@@ -161,6 +202,8 @@ def decide(bot: dict, asset: str) -> dict:
         why = entry_guard(bot, asset, d)
         if why:
             return {**d, "action": "HOLD", "reason": f"[{asset}] entry filtered · {why}"}
+        if agg:
+            d["reason"] += f" · passed production guard (conf {d['confidence'] * 100:.0f}%)"
     return d
 
 
@@ -300,7 +343,10 @@ async def record_fill(bot: dict, side: str, price: float, qty: float, fill: str,
     else:
         pnl = net_pnl(bot, pos["entry_price"], price, qty) if bot["mode"] == "live" else round((price - pos["entry_price"]) * qty, 4)
         upd.update(pos_fields(asset, qty=0.0, entry=0.0, peak=0.0, tp_taken=False, stop=0.0, tiers=0, atr=0.0), realized_pnl=round(bot["realized_pnl"] + pnl, 4),
-                   wins=bot["wins"] + (pnl > 0), losses=bot["losses"] + (pnl <= 0))
+                   wins=bot["wins"] + (pnl > 0), losses=bot["losses"] + (pnl <= 0),
+                   loss_streak=0 if pnl > 0 else int(bot.get("loss_streak", 0)) + 1)
+        if pnl <= 0:
+            upd["last_loss_ts"] = time.time()
         if bot["mode"] != "live":
             upd["cash"] = bot["cash"] + qty * price
     await set_bot(uid, **upd)
@@ -337,6 +383,8 @@ def buy_usd(bot: dict, d: dict, cash: float, price: float) -> float:
 
 async def check_daily_loss(bot: dict):
     lim = float(bot.get("daily_loss_limit") or 0)
+    if lim <= 0:
+        lim = round(float(bot.get("start_equity") or bot.get("live_equity") or 0) * 0.03, 2)
     if lim <= 0:
         return
     start = int(datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp() * 1000)
@@ -413,6 +461,8 @@ async def execute(bot: dict, d: dict, asset: str = "BTC"):
                 return await wait_log(uid, bot, f"[{asset}] BUY signal skipped · need {usd} {quote} in trading, have {round(have, 4)}. Deposit {quote}/USDC.")
             if usd / price < min_qty or usd < min_cost:
                 return await wait_log(uid, bot, f"[{asset}] BUY signal skipped · ${usd} is below the {symbol} minimum (≈ ${round(max(min_qty * price, min_cost), 2)}). Raise POSITION SIZE / % or deposit more.")
+            if not d.get("dip") and (lq := await liquidity_guard(ex, symbol, usd)):
+                return await wait_log(uid, bot, f"[{asset}] BUY skipped · {lq}")
             o = await market_order(ex, symbol, "BUY", usd, 0, price, maker=bot.get("maker_entries", True))
             qty = float(o.get("filled") or 0) or usd / price
             fill_px = float(o.get("average") or price)

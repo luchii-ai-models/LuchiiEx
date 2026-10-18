@@ -168,3 +168,9 @@ User choices: copy from trade-bridge-73; use the env values exactly; no Emergent
 - backend/funding.py: settle_fiat_deposit (clearing→wallet, idempotent) → bridge_to_trading (wallet→USER_USD_TRADING) → okx_transfers ticket QUEUED; treasury settles via POST /api/treasury/okx-transfers/{id}/settle (OKX_MASTER_USD ← clearing). Trading capital shown in Wallet tab + GET /api/wallet/trading-capital.
 - Engine: get_creds falls back to house MASTER exchange key (POST /api/treasury/master-exchange, TREASURY role); live_equity for master-routed users = min(master exchange equity, ledger trading capital). Autopilot engages at ≥$5. MASTER key NOT yet set — needs house OKX API key.
 - Cash App / Square: config-gated rails (/api/deposits/rails, /api/deposits/{rail}/order → 503 until SQUARE_ACCESS_TOKEN+SQUARE_LOCATION_ID / CASHAPP_CLIENT_ID+CASHAPP_API_KEY). Checkout not implemented yet (501 once configured).
+
+## 2026-10-18 · Production entry guard (no-bypass)
+- strategy.indicators: +ema9/ema21, vwap(1440), mtf_trend(1m/5m/15m EMA9>21); entry_score uses EMA9>21 instead of SMA5/13; strategy.confidence() weighted (trend .30 mom .20 vol .20 BTC .15 ADX .15). atr_stop_mult 2.5→1.5, risk per trade 1%.
+- engine.entry_guard applies to BOTH strategies (aggressive bypass removed): no CHOP, ADX≥25, EMA9>21, price>VWAP, RSI 55-70, vol≥1.5x, ATR expanding, 5m/15m aligned, score≥80, conf≥80%, BTC>EMA200 & RSI>45 & trend up for alts. Loss cooldown 30m, 3-loss streak → 60m pause (bot.loss_streak/last_loss_ts). Daily loss default 3% of start equity → kill switch.
+- engine.liquidity_guard before every BUY: notional≥$50, spread≤0.05%, bid/ask imbalance≥1.25, 24h vol≥$5M. Aggressive TP 0.6→1.2 (3:1 vs 0.4 SL). Maker/post-only entries already default.
+- Not done from spec: OKX WS fill tracker, 60s reconciliation loop, orphan-order cleanup, scale-out at 1R/2R (tiers exist at %), Kelly sizing.

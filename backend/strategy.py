@@ -3,7 +3,7 @@ import math
 
 RULES = {
     "entry": {"rsi_min": 55, "trend_pct_min": 0.08, "volume_ratio_min": 1.5, "adx_min": 25, "score_min": 80},
-    "risk": {"atr_stop_mult": 2.5, "bull": 0.015, "bear": 0.0075, "score90": 0.015, "score80": 0.01, "score70": 0.005},
+    "risk": {"atr_stop_mult": 1.5, "bull": 0.01, "bear": 0.0075, "score90": 0.01, "score80": 0.01, "score70": 0.005},
     "tiers": [(1.0, 0.25), (2.5, 0.25), (5.0, 0.25)],
     "trail": {"break_even": 0.5, "profit_lock": 1.0, "lock_mult": 1.0025, "atr3_at": 2.0, "atr2_at": 5.0},
 }
@@ -134,14 +134,36 @@ def regime(i: dict, struct=None) -> str:
     return "CHOP"
 
 
+def vwap(candles: list, n: int = 1440):
+    win = candles[-n:]
+    pv = sum(((c["h"] + c["l"] + c["c"]) / 3) * c["v"] for c in win)
+    v = sum(c["v"] for c in win)
+    return pv / v if v else None
+
+
+def resample(candles: list, step: int) -> list:
+    """1m → step-minute closes (last partial bucket dropped)."""
+    full = len(candles) // step * step
+    return [candles[i + step - 1]["c"] for i in range(0, full, step)]
+
+
+def mtf_trend(candles: list) -> dict:
+    out = {}
+    for tf, step in (("1m", 1), ("5m", 5), ("15m", 15)):
+        closes = resample(candles, step) if step > 1 else [c["c"] for c in candles]
+        e9, e21 = ema(closes, 9), ema(closes, 21)
+        out[tf] = None if nan(e9, e21) else e9 > e21
+    return out
+
+
 def indicators(candles: list, price: float, rsi: float) -> dict:
     closes = [c["c"] for c in candles]
     vols = [c["v"] for c in candles]
-    e20, e50, e200 = ema(closes, 20), ema(closes, 50), ema(closes, 200)
+    e9, e21, e20, e50, e200 = ema(closes, 9), ema(closes, 21), ema(closes, 20), ema(closes, 50), ema(closes, 200)
     a, a_ma, ax = atr(candles), atr_series(candles), adx(candles)
     vma = sma(vols[:-1], 20)
-    out = {"price": price, "rsi": rsi, "sma5": sma(closes, 5), "sma13": sma(closes, 13), "ema20": e20, "ema50": e50, "ema200": e200,
-           "atr": a, "atr_ma": a_ma, "adx": ax,
+    out = {"price": price, "rsi": rsi, "sma5": sma(closes, 5), "sma13": sma(closes, 13), "ema9": e9, "ema21": e21, "ema20": e20, "ema50": e50, "ema200": e200,
+           "atr": a, "atr_ma": a_ma, "adx": ax, "vwap": vwap(candles), "mtf": mtf_trend(candles),
            "trend_pct": ((e20 - e50) / e50 * 100) if e20 and e50 else None,
            "volume_ratio": (vols[-2] / vma) if vma and len(vols) >= 2 else None}
     out["structure"] = structure(candles, price)
@@ -150,8 +172,16 @@ def indicators(candles: list, price: float, rsi: float) -> dict:
     return out
 
 
+def confidence(i: dict, btc: dict) -> float:
+    """Weighted conviction 0..1: trend .30 · momentum .20 · volume .20 · BTC .15 · ADX .15."""
+    if nan(i.get("ema9"), i.get("ema21"), i.get("rsi"), i.get("volume_ratio"), i.get("adx")):
+        return 0.0
+    return round((0.30 if i["ema9"] > i["ema21"] else 0) + (0.20 if i["rsi"] > 60 else 0) + (0.20 if i["volume_ratio"] > 1.5 else 0)
+                 + (0.15 if btc.get("bull_trend") else 0) + (0.15 if i["adx"] > 30 else 0), 2)
+
+
 def entry_score(i: dict) -> tuple:
-    checks = [("SMA5>13", i["sma5"] > i["sma13"]), ("EMA20>50", i["ema20"] > i["ema50"]), (f"RSI>{rules()['entry']['rsi_min']}", i["rsi"] > rules()["entry"]["rsi_min"]),
+    checks = [("EMA9>21", (i.get("ema9") or 0) > (i.get("ema21") or 0)), ("EMA20>50", i["ema20"] > i["ema50"]), (f"RSI>{rules()['entry']['rsi_min']}", i["rsi"] > rules()["entry"]["rsi_min"]),
               (f"VOL>{rules()['entry']['volume_ratio_min']}x", i["volume_ratio"] > rules()["entry"]["volume_ratio_min"]),
               (f"TREND>{rules()['entry']['trend_pct_min']}%", i["trend_pct"] > rules()["entry"]["trend_pct_min"])]
     score = sum(20 for _, ok in checks if ok)
