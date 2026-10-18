@@ -57,3 +57,16 @@ def test_dip_stop_exit_and_luchii_untouched():
     engine.SNAPSHOT["markets"]["ETH"]["price"] = cs[-1]["c"]
     engine.SNAPSHOT["markets"]["BTC"] = engine.SNAPSHOT["markets"]["ETH"]
     assert engine.decide({**bot(), "strategy": "luchii003"}, "ETH")["action"] == "HOLD"
+
+
+def test_quiet_market_filter_blocks_unreachable_target():
+    flat = [{"t": k, "o": 2400, "h": 2400.3, "l": 2399.7, "c": 2400.0 + (0.2 if k % 2 else 0), "v": 1} for k in range(40)]
+    flat[-1]["c"] = 2401.0  # SMA5 > SMA13 cross
+    engine.SNAPSHOT["markets"] = {"ETH": {"price": 2401.0, "candles": flat, "rsi": 55}}
+    d = engine.signal(bot(), "ETH")
+    assert d["action"] == "HOLD" and "too quiet" in d["reason"]
+    # volatile market: ATR ~0.3% -> reachable 1.8% > 0.82%
+    vol = [{"t": k, "o": 2400, "h": 2410, "l": 2390, "c": 2400.0 + (k % 3) * 3, "v": 1} for k in range(40)]
+    vol[-1]["c"] = 2415.0
+    engine.SNAPSHOT["markets"] = {"ETH": {"price": 2415.0, "candles": vol, "rsi": 55}}
+    assert "too quiet" not in engine.signal(bot(), "ETH")["reason"]

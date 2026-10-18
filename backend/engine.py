@@ -225,6 +225,12 @@ def signal(bot: dict, asset: str = "BTC") -> dict:
             tight = float(bot.get("dip_stop_pct") or 0.25)
             return {"action": "BUY", "confidence": 0.8, "dip": True, "stop": price * (1 - tight / 100),
                     "reason": f"[{asset}] OVERSOLD DIP · RSI {r} < 25 · first green candle after the sell-off · tight stop -{tight}% · AGGRESSIVE"}
+    if flat and agg and len(candles) >= 20:
+        a = strategy.atr(candles[-20:])
+        atr_pct = (a / price * 100) if a and price else 0
+        reach = atr_pct * 6
+        if tp and reach < tp:
+            return {"action": "HOLD", "confidence": conf, "reason": f"[{asset}] market too quiet · 1m ATR {atr_pct:.3f}% → reachable ≈{reach:.2f}% < target +{tp}% net · fees would eat the trade · RSI {r}"}
     if flat and s7 > s25 and r < rsi_cap:
         last_stop = (bot.get("last_stop") or {}).get(asset) or {}
         cooldown = float(bot.get("reentry_cooldown_min", 15))
