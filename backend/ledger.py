@@ -6,6 +6,8 @@ import uuid
 from decimal import Decimal
 from typing import Optional
 
+from pymongo.errors import DuplicateKeyError
+
 from db import db, now_ms
 
 EPS = Decimal("0.00000001")
@@ -27,7 +29,13 @@ SYSTEM_ACCOUNTS = [
 
 
 class LedgerError(ValueError):
-    pass
+    def __init__(self, msg: str, status: int = 400):
+        super().__init__(msg)
+        self.status = status
+
+
+def _req_hash(lines) -> str:
+    return hashlib.sha256(json.dumps(lines, sort_keys=True, default=str).encode()).hexdigest()
 
 
 def D(x) -> Decimal:
@@ -93,9 +101,10 @@ def user_code(uid: str, ccy: str, kind: str = "WALLET") -> str:
     return f"USER_{uid}_{ccy.upper()}_{kind}"
 
 
-async def balance(account_id: str) -> Decimal:
+async def balance(account_id: str, include_pending: bool = False) -> Decimal:
+    st = {"$in": ["POSTED", "PENDING"]} if include_pending else "POSTED"
     agg = await db.journal_lines.aggregate([
-        {"$match": {"account_id": account_id, "status": "POSTED"}},
+        {"$match": {"account_id": account_id, "status": st}},
         {"$group": {"_id": None, "d": {"$sum": {"$toDecimal": "$debit"}}, "c": {"$sum": {"$toDecimal": "$credit"}}}}]).to_list(1)
     if not agg:
         return Decimal(0)
@@ -109,39 +118,56 @@ async def post_journal(lines: list[dict], *, source: str, description: str, refe
     """lines: [{"account": CODE, "debit": x} | {"account": CODE, "credit": x}]. Validates then posts atomically-enough (insert lines, then flip to POSTED)."""
     if idempotency_key:
         ex = await db.journal_entries.find_one({"idempotency_key": idempotency_key}, {"_id": 0})
+        if ex and ex.get("status") == "REJECTED":
+            await db.journal_entries.delete_one({"id": ex["id"]})
+            ex = None
         if ex:
+            if ex.get("request_hash") and ex["request_hash"] != _req_hash(lines):
+                raise LedgerError("Idempotency-Key reused with a different payload", 409)
+            ex["lines"] = await db.journal_lines.find({"journal_entry_id": ex["id"]}, {"_id": 0}).to_list(None)
             return ex
     if len(lines) < 2:
         raise LedgerError("A journal needs at least two lines")
-    accts, td, tc, ccys, out = {}, Decimal(0), Decimal(0), set(), []
+    accts, by_ccy, ccys, out = {}, {}, set(), []
     for ln in lines:
+        if not isinstance(ln, dict) or not ln.get("account"):
+            raise LedgerError("Each line needs an 'account' code")
         a = accts.get(ln["account"]) or await account(ln["account"])
         accts[ln["account"]] = a
-        d, c = D(ln.get("debit")), D(ln.get("credit"))
+        try:
+            d, c = D(ln.get("debit")), D(ln.get("credit"))
+        except Exception:
+            raise LedgerError("debit/credit must be numeric")
         if d < 0 or c < 0 or (d > 0) == (c > 0):
             raise LedgerError(f"Line on {a['code']} must have exactly one positive side")
         ccy = (ln.get("currency") or a["currency"]).upper()
         if ccy != a["currency"]:
             raise LedgerError(f"Currency mismatch account={a['currency']} posting={ccy}")
         ccys.add(ccy)
-        td, tc = td + d, tc + c
+        td, tc = by_ccy.get(ccy, (Decimal(0), Decimal(0)))
+        by_ccy[ccy] = (td + d, tc + c)
         out.append({"id": str(uuid.uuid4()), "account_id": a["id"], "account_code": a["code"], "currency": ccy, "debit": _s(d), "credit": _s(c)})
-    if abs(td - tc) > EPS:
-        raise LedgerError(f"Journal out of balance ({_s(td)} vs {_s(tc)})")
+    for ccy, (td, tc) in by_ccy.items():
+        if abs(td - tc) > EPS:
+            raise LedgerError(f"Journal out of balance in {ccy} ({_s(td)} vs {_s(tc)})")
     if len(ccys) > 1 and not is_conversion:
         raise LedgerError("Multiple currencies in one journal require is_conversion=True")
     jid = str(uuid.uuid4())
     je = {"id": jid, "source": source, "reference_type": reference_type, "reference_id": reference_id, "idempotency_key": idempotency_key,
+          "request_hash": _req_hash(lines) if idempotency_key else None,
           "description": description, "is_conversion": is_conversion, "status": "PENDING", "created_at": now_ms(), "posted_at": None, "actor_id": actor_id}
-    await db.journal_entries.insert_one(dict(je))
+    try:
+        await db.journal_entries.insert_one(dict(je))
+    except DuplicateKeyError:
+        return await post_journal(lines, source=source, description=description, reference_type=reference_type, reference_id=reference_id,
+                                  idempotency_key=idempotency_key, is_conversion=is_conversion, actor_id=actor_id)
     for ln in out:
         ln.update(journal_entry_id=jid, created_at=je["created_at"], status="PENDING")
     await db.journal_lines.insert_many([dict(ln) for ln in out])
-    # liability accounts may not go negative once this journal lands
+    # liability accounts may not go negative once this journal lands (PENDING lines of concurrent journals count too)
     for a in accts.values():
         if a["account_type"] == "LIABILITY":
-            delta = sum((D(ln["credit"]) - D(ln["debit"])) for ln in out if ln["account_id"] == a["id"])
-            if await balance(a["id"]) + delta < -EPS:
+            if await balance(a["id"], include_pending=True) < -EPS:
                 await db.journal_lines.delete_many({"journal_entry_id": jid})
                 await db.journal_entries.update_one({"id": jid}, {"$set": {"status": "REJECTED", "error": f"Negative liability balance on {a['code']}"}})
                 raise LedgerError(f"Insufficient balance on {a['code']}")
@@ -156,15 +182,19 @@ async def post_journal(lines: list[dict], *, source: str, description: str, refe
 
 
 async def reverse_journal(original_id: str, reason: str, actor_id: str = None) -> dict:
-    orig = await db.journal_entries.find_one({"id": original_id, "status": "POSTED"}, {"_id": 0})
+    # claim first: atomically flip POSTED → REVERSING so concurrent reversals lose here, before anything is posted
+    orig = await db.journal_entries.find_one_and_update({"id": original_id, "status": "POSTED"}, {"$set": {"status": "REVERSING"}}, projection={"_id": 0})
     if not orig:
-        raise LedgerError("Original journal not found or not posted")
-    if await db.ledger_reversals.find_one({"original_journal_entry_id": original_id}):
-        raise LedgerError("Journal already reversed")
+        cur = await db.journal_entries.find_one({"id": original_id}, {"status": 1})
+        raise LedgerError("Journal already reversed" if cur and cur.get("status") in ("REVERSING", "REVERSED") else "Original journal not found or not posted")
     lines = await db.journal_lines.find({"journal_entry_id": original_id}, {"_id": 0}).to_list(None)
     flipped = [{"account": ln["account_code"], "debit": ln["credit"], "credit": ln["debit"]} for ln in lines]
-    rev = await post_journal(flipped, source="SYSTEM", description=f"REVERSAL of {original_id}: {reason}", reference_type="REVERSAL",
-                             reference_id=original_id, is_conversion=orig.get("is_conversion", False), actor_id=actor_id)
+    try:
+        rev = await post_journal(flipped, source="SYSTEM", description=f"REVERSAL of {original_id}: {reason}", reference_type="REVERSAL",
+                                 reference_id=original_id, idempotency_key=f"rev:{original_id}", is_conversion=orig.get("is_conversion", False), actor_id=actor_id)
+    except LedgerError:
+        await db.journal_entries.update_one({"id": original_id, "status": "REVERSING"}, {"$set": {"status": "POSTED"}})
+        raise
     await db.journal_entries.update_one({"id": original_id}, {"$set": {"status": "REVERSED", "reversed_by": rev["id"]}})
     doc = {"id": str(uuid.uuid4()), "original_journal_entry_id": original_id, "reversal_journal_entry_id": rev["id"], "reason": reason,
            "initiated_by": actor_id, "created_at": now_ms()}

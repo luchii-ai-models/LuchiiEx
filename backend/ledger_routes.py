@@ -34,8 +34,8 @@ def _page(page: int, size: int):
     return max(1, page), max(1, min(size, 100))
 
 
-def _err(e: Exception, code="LEDGER_ERROR", status=400):
-    raise HTTPException(status, {"code": code, "message": str(e)})
+def _err(e: Exception, code="LEDGER_ERROR", status=None):
+    raise HTTPException(status or getattr(e, "status", 400), {"code": code, "message": str(e)})
 
 
 # ---------- profile / settings / kyc ----------
@@ -128,8 +128,15 @@ async def create_reversal(body: ReversalIn, user=Depends(require("JOURNAL_REVERS
         _err(e)
 
 
+class JournalLine(BaseModel):
+    account: str = Field(min_length=1)
+    debit: float = Field(0, ge=0)
+    credit: float = Field(0, ge=0)
+    currency: Optional[str] = None
+
+
 class JournalIn(BaseModel):
-    lines: list[dict] = Field(min_length=2)
+    lines: list[JournalLine] = Field(min_length=2)
     description: str
     source: str = "SYSTEM"
     isConversion: bool = False
@@ -138,7 +145,7 @@ class JournalIn(BaseModel):
 @r.post("/admin/ledger/journals", status_code=201)
 async def admin_post_journal(body: JournalIn, user=Depends(require("TREASURY")), idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key")):
     try:
-        return await ledger.post_journal(body.lines, source=body.source, description=body.description, reference_type="MANUAL",
+        return await ledger.post_journal([ln.model_dump(exclude_none=True) for ln in body.lines], source=body.source, description=body.description, reference_type="MANUAL",
                                          idempotency_key=idempotency_key, is_conversion=body.isConversion, actor_id=user["id"])
     except ledger.LedgerError as e:
         _err(e)
@@ -207,7 +214,12 @@ class RoleIn(BaseModel):
 @r.patch("/admin/users/{uid}/role")
 async def set_role(uid: str, body: RoleIn, user=Depends(require("*"))):
     from bson import ObjectId
-    u = await db.users.find_one({"_id": ObjectId(uid)}) or _err(ValueError("User not found"), "NOT_FOUND", 404)
+    from bson.errors import InvalidId
+    try:
+        oid = ObjectId(uid)
+    except InvalidId:
+        _err(ValueError("Invalid user id"), "VALIDATION_ERROR", 400)
+    u = await db.users.find_one({"_id": oid}) or _err(ValueError("User not found"), "NOT_FOUND", 404)
     await db.users.update_one({"_id": u["_id"]}, {"$set": {"role": body.role}})
     await ledger.audit_event(user["id"], "user", uid, "ROLE_CHANGE", {"role": u.get("role")}, {"role": body.role})
     return {"id": uid, "role": body.role}

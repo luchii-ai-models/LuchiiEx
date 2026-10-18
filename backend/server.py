@@ -299,9 +299,19 @@ async def bot_start(user=Depends(current_user)):
 @api.post("/bot/stop")
 async def bot_stop(user=Depends(current_user)):
     await get_bot(user)
-    await set_bot(user["id"], status="stopped")
-    await engine.log(db, user["id"], {"action": "HOLD", "engine": "system", "confidence": 1.0, "reason": "engine halted"}, SNAPSHOT.get("price"))
+    await set_bot(user["id"], status="stopped", autopilot=False)
+    await engine.log(db, user["id"], {"action": "HOLD", "engine": "system", "confidence": 1.0, "reason": "AUTOPILOT paused by owner · exits still managed · tap RESUME to let the AI trade again"}, SNAPSHOT.get("price"))
     return {"ok": True}
+
+
+@api.post("/bot/resume")
+async def bot_resume(user=Depends(current_user)):
+    bot = await get_bot(user)
+    if bot.get("kill_switch"):
+        bad("Kill switch engaged — re-arm first")
+    await set_bot(user["id"], autopilot=True)
+    await engine.autopilot_engage()
+    return await bot_view(await get_bot(user))
 
 
 @api.post("/bot/kill")

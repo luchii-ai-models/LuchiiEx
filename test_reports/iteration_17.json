@@ -1,0 +1,42 @@
+{
+  "summary": "Backend-only test of double-entry ledger, treasury transfers, journal validation, reversals, trial balance, liability protection, hash-chained audit log, profile/settings/KYC, RBAC, webhooks and dead-letter/job admin endpoints. 21 pytest cases (test_iteration19_ledger.py): 19/21 passed after fixing a wrong test path (/api/bot does not exist; /api/bot/state is 200). Every requested feature works for sequential requests. 2 functional failures plus 2 concurrency bugs found with a parallel probe (it19_concurrency_probe.py).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/ledger/reversals", "issue": "Race condition: 5 parallel reversals of one journal returned [500,500,201,400,500] and left FOUR POSTED REVERSAL journals for the same original. The ledger is double-reversed: trial balance still shows balanced, but account balances are wrong. Cause: reverse_journal checks ledger_reversals, then post_journal(), and only inserts into ledger_reversals afterward. The unique index fires after the reversal journal is already posted. Fix: claim first. Atomically find_one_and_update the original from status POSTED to REVERSING (or insert the ledger_reversals doc first), then post with idempotency_key=f'rev:{original_id}'.", "priority": "CRITICAL"},
+      {"endpoint": "POST /api/treasury/transfers, POST /api/admin/ledger/journals (Idempotency-Key)", "issue": "6 parallel requests with the same key returned [201,201,500,500,500,201]. No duplicate journal was created (unique index), but the losers get a 500 from the DuplicateKeyError on journal_entries insert. Fix: catch DuplicateKeyError on insert and return the existing journal.", "priority": "HIGH"},
+      {"endpoint": "POST /api/treasury/transfers, POST /api/admin/ledger/journals", "issue": "Reusing an Idempotency-Key with a DIFFERENT body (amount 5, then 7) silently returns 201 with the original journal. Expected 409/422. post_journal only looks up by key and ignores the request hash. The ledger.idempotent() helper exists (it hashes the request) but post_journal never calls it.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "POST /api/admin/ledger/journals", "issue": "A line without an 'account' key returns 500 (KeyError 'account' in ledger.post_journal). JournalIn.lines is list[dict] with no validation. Use a pydantic JournalLine model (account: str, debit/credit: Decimal >= 0)."},
+      {"endpoint": "POST /api/admin/ledger/journals", "issue": "If a journal is REJECTED for insufficient balance, its entry keeps the idempotency_key. A retry with the same key after funding the wallet returns the REJECTED entry with 201 and never posts."},
+      {"endpoint": "ledger.post_journal (liability protection)", "issue": "Not concurrency-safe (code review). The negative-balance check only counts POSTED lines, and the journal's own lines are PENDING, so two parallel debits of the same wallet can both pass and overdraft it. Not reproduced, because that needs a funded user wallet."},
+      {"endpoint": "ledger.post_journal (is_conversion)", "issue": "For conversion journals the debit==credit check sums amounts across currencies (BTC units vs USD), so it means nothing. The per-currency trial balance will then show balanced:false. Conversions need a per-currency balance through an FX/conversion clearing account."},
+      {"endpoint": "PATCH /api/admin/users/{uid}/role", "issue": "An invalid ObjectId string gives 500 (bson InvalidId), not 404/400 (code review)."},
+      {"endpoint": "GET /api/ledger/journals (idempotent replay response)", "issue": "On replay, post_journal returns the stored entry WITHOUT 'lines', so the first and replayed responses have different shapes."},
+      {"endpoint": "server.py:1034", "issue": "api.include_router(ledger_routes.r) runs after app.include_router(api), so it does nothing (dead code). The routes work through line 1035."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/test_iteration19_ledger.py", "/app/backend/tests/it19_concurrency_probe.py", "/app/test_reports/pytest/pytest_iteration19.xml"],
+  "action_items": [
+    "Make reverse_journal atomic: claim the original before posting (status POSTED->REVERSING via find_one_and_update, or insert ledger_reversals first) and use idempotency_key rev:<id>",
+    "In post_journal, catch DuplicateKeyError on the journal_entries insert and return the existing entry (no 500 under concurrent same-key requests)",
+    "Store a request hash with the idempotency key and return 409 when the same key comes with a different payload",
+    "Validate journal lines with a pydantic model so malformed lines return 422, not 500",
+    "Do not attach idempotency_key to REJECTED journals (or allow retry), so a client can retry after funding",
+    "Make the liability-balance check concurrency-safe (per-account lock/version doc, or Mongo transaction)"
+  ],
+  "critical_code_review_comments": [
+    "ledger.post_journal is not transactional (insert PENDING lines, check, flip to POSTED). A crash mid-way leaves PENDING journals. Consider Mongo multi-doc transactions if the deployment is a replica set.",
+    "_audit_lock is an in-process asyncio.Lock. With more than one worker, chain_sequence collisions raise DuplicateKeyError (500) instead of serialising.",
+    "server.py is 1063 lines; it should be split."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration19_ledger.py", "/app/backend/tests/it19_concurrency_probe.py"],
+  "success_rate": {"backend": "90% (19/21 pytest; plus 2 concurrency bugs from the probe)", "frontend": "not tested"},
+  "seed_data_creation": "Registered fresh users test_ledger_<hex>@example.com. Posted several small USDT treasury transfer journals (TEST_ idempotency keys) between TREASURY_USDT and OKX_MASTER_USDT, plus reversals. The concurrency probe left 4 duplicate REVERSAL journals for one 1 USDT transfer. Ledger entries are immutable so they were not cleaned up. Admin KYC set to APPROVED; admin settings riskLevel=HIGH; admin firstName=Test.",
+  "test_credentials": "admin@gravia.io / Gravia@2026 (from /app/memory/test_credentials.md)",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run: cd /app/backend && python -m pytest tests/test_iteration19_ledger.py (pytest.ini uses xdist; -s prints nothing, so run the probe directly with the env from frontend/.env exported). /api/bot does not exist; use /api/bot/state. /api/chat/models still returns 200. Webhook secrets are not configured, so unsigned /api/webhooks/luchii returns 503 as expected.",
+  "rca of the issue": "Double reversal: ledger.reverse_journal does check-then-act with no atomic claim. N concurrent callers all pass the find_one(ledger_reversals) check, each post_journal()s a reversal (no idempotency key), and only then insert into ledger_reversals, where the unique index rejects N-1 of them with a 500 after their journals are already POSTED. Repro: post a treasury transfer, then fire 5 parallel POST /api/ledger/reversals for it, then count POSTED REVERSAL journals with reference_id=<id> (got 4)."
+}

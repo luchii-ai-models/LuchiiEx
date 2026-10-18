@@ -727,8 +727,31 @@ async def scheduler():
             log_.error("TICK WATCHDOG: trading loop starved for %.0fs (expected %.0fs)", gap, every)
             await db.audit_log.insert_one({"event": "tick_starved", "seconds": round(gap), "ts": now_ms()})
         last = time.time()
+        await autopilot_engage()
         async for bot in db.bots.find({"status": "running"}):
             try:
                 await tick_bot(bot)
             except Exception as e:
                 log_.exception("tick failed for %s: %s", bot.get("user_id"), e)
+
+
+async def autopilot_engage():
+    """Autopilot: any live bot with an exchange key, funds on the account and no pause/kill goes to running by itself."""
+    async for bot in db.bots.find({"status": {"$ne": "running"}, "mode": "live", "autopilot": {"$ne": False}, "kill_switch": {"$ne": True}}):
+        uid = bot["user_id"]
+        if not await get_creds(uid):
+            continue
+        try:
+            await refresh_live_equity({"user_id": uid})
+            fresh = await db.bots.find_one({"user_id": uid})
+            eq = float(fresh.get("live_equity") or 0)
+        except Exception as e:  # noqa: BLE001
+            log_.warning("autopilot equity check failed for %s: %s", uid, e)
+            continue
+        if eq < 5:
+            continue
+        await set_bot(uid, status="running")
+        await log(db, uid, {"action": "HOLD", "engine": "system", "confidence": 1.0,
+                            "reason": f"AUTOPILOT engaged · ${eq:,.2f} detected on exchange · AI trades automatically · only withdrawals need you"}, SNAPSHOT.get("price"))
+        await alerts.notify(fresh, f"🤖 Autopilot engaged · ${eq:,.2f} available")
+

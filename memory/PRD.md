@@ -144,3 +144,16 @@ User choices: copy from trade-bridge-73; use the env values exactly; no Emergent
 
 ## 2026-10-18 · Strategy toggle on ACTIVE card
 - BotStatusCard `StrategyToggle` (data-testid strategy-toggle) flips strategy via POST /bot/config {strategy, aggressive}; backend logs "strategy switched → …". Verified round-trip in browser; applies to next entry only, open positions still managed.
+
+
+## 2026-10-18 · Ledger / Profile / RBAC / Webhooks / Autopilot
+**Decisions (user pasted a Postgres/Node spec; app is Mongo/FastAPI → adapted, not ported):**
+- Ledger implemented on MongoDB (`backend/ledger.py`): chart of accounts (system + per-user USD/USDT/BTC/ETH/SOL WALLET+PENDING, liability), journals/lines, per-currency balance check, is_conversion flag, currency-match check, liability-non-negative check (PENDING-aware), immutable POSTED, reversals via claim (POSTED→REVERSING→REVERSED) + idempotency `rev:<id>`, Idempotency-Key with request-hash (409 on mismatch, DuplicateKey → return existing), REJECTED entries retryable, hash-chained append-only audit (`verify_audit_chain`), transactional outbox (`outbox_events`, published by worker).
+- Domain postings: realised trade P&L + exchange fee on live SELL (engine.record_fill), OKX withdrawals, confirmed OKX deposits (mirrored from /wallet/real/history, idempotent on txid). PERFORMANCE_FEES_USD account exists but NO fee is posted (user not asked yet).
+- `backend/profile.py`: profile / settings / KYC (submit → IN_REVIEW; admin decision).
+- `backend/ledger_routes.py`: RBAC roles user/support/treasury_admin/compliance_admin/admin(super) via `require(perm)`. Routes: /profile /settings /kyc /kyc/submit /wallets /ledger/journals /ledger/reversals /treasury/transfers /admin/{accounts,audit-events,audit-events/verify,dead-letters,webhook-jobs,users/{id}/role,kyc/{uid},ledger/journals} /webhooks/{provider}.
+- `backend/webhooks.py`: HMAC verify (luchii/paypal/cashapp envelope: X-Signature=HMAC(ts.body), X-Timestamp 5-min window; square; okx), replay protection (webhook_receipts unique), jobs with full-jitter retries → dead letters → admin replay. Secrets via env WEBHOOK_SECRET_<PROVIDER> (none configured → 503). PayPal SDK verification NOT wired.
+- NOT implemented (out of scope / not applicable to this stack): Postgres migrations, master-account trade allocations (custody decision pending), fiat rail integrations, BullMQ/Redis, Prometheus/Grafana/Alertmanager, Kubernetes jobs, chaos tests, OpenAPI/AsyncAPI files.
+- UI: Settings → "LEDGER · PROFILE" tab (`LedgerTab.jsx`): wallets, journals (admin can reverse), profile edit, KYC submit. Luchii chat page removed.
+- **Autopilot**: START button removed. `engine.autopilot_engage()` runs every tick: live bot + exchange key + equity ≥ $5 + not paused/killed → status running automatically. PAUSE sets `autopilot=false`; RESUME re-enables. Withdrawals remain manual. No profit guarantee.
+- Tests: test_reports/iteration_17.json (19/21 + concurrency probe) → all CRITICAL/HIGH fixed and re-verified via curl (409 mismatch, 1 reversal under 5 parallel, no 500s on parallel same key, 422 bad line, trial balance balanced, audit chain ok).

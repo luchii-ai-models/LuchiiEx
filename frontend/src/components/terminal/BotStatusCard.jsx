@@ -92,14 +92,20 @@ export default function BotStatusCard({ bot, refresh, highlightKill }) {
 
       <div className="grid grid-cols-4 gap-1.5 mt-3">
         {!live ? (
-          <button data-testid="bot-start-button" disabled={bot.kill_switch} onClick={() => act(() => api.post("/bot/start"), "Engine engaged")}
-            className="col-span-2 border border-neon-green text-neon-green hover:bg-neon-green hover:text-black transition-colors py-2 text-xs tracking-[0.15em] flex items-center justify-center gap-1 disabled:opacity-30">
-            <Play size={12} /> START
-          </button>
+          bot.autopilot === false ? (
+            <button data-testid="bot-resume-button" disabled={bot.kill_switch} onClick={() => act(() => api.post("/bot/resume"), "Autopilot resumed")}
+              className="col-span-2 border border-neon-green text-neon-green hover:bg-neon-green hover:text-black transition-colors py-2 text-xs tracking-[0.15em] flex items-center justify-center gap-1 disabled:opacity-30">
+              <Play size={12} /> RESUME AUTOPILOT
+            </button>
+          ) : (
+            <div data-testid="bot-autopilot-waiting" className="col-span-2 border border-term-border text-term-muted py-2 text-[10px] tracking-[0.12em] flex items-center justify-center gap-1 text-center">
+              <Zap size={10} /> AUTOPILOT · {bot.mode === "live" ? "starts when funds land" : "connect exchange"}
+            </div>
+          )
         ) : (
-          <button data-testid="bot-stop-button" onClick={() => act(() => api.post("/bot/stop"), "Engine halted")}
+          <button data-testid="bot-stop-button" onClick={() => act(() => api.post("/bot/stop"), "Autopilot paused")}
             className="col-span-2 border border-neon-red text-neon-red hover:bg-neon-red hover:text-black transition-colors py-2 text-xs tracking-[0.15em] flex items-center justify-center gap-1">
-            <Square size={12} /> STOP
+            <Square size={12} /> PAUSE
           </button>
         )}
         <button data-testid="bot-kill-button" ref={killRef} onClick={() => act(() => api.post("/bot/kill"), "Kill switch engaged")}
