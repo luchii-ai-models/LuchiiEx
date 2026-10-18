@@ -93,6 +93,36 @@ function Balances({ data }) {
   );
 }
 
+function PayPalDeposit() {
+  const [amount, setAmount] = useState("50");
+  const [cfg, setCfg] = useState(null);
+  useEffect(() => { api.get("/deposits/paypal/status").then((r) => setCfg(r.data)).catch(() => setCfg({ configured: false })); }, []);
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search); const token = q.get("token");
+    if (q.get("paypal") === "return" && token) {
+      api.post(`/deposits/paypal/capture/${token}`).then((r) => toast.success(`PayPal deposit $${r.data.amount} settled · autopilot will trade it`)).catch(err)
+        .finally(() => window.history.replaceState({}, "", window.location.pathname));
+    }
+  }, []);
+  const go = async () => {
+    try {
+      const base = window.location.origin + window.location.pathname;
+      const { data } = await api.post("/deposits/paypal/order", { amount: Number(amount), returnUrl: `${base}?paypal=return`, cancelUrl: `${base}?paypal=cancel` });
+      window.location.href = data.approveUrl;
+    } catch (e) { err(e); }
+  };
+  return (
+    <Section icon={ArrowDownToLine} title="FUND WITH PAYPAL">
+      {cfg && !cfg.configured && <p className="text-[9px] text-neon-amber" data-testid="paypal-unconfigured">PayPal is not connected yet — add PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET on the server to enable card & PayPal deposits.</p>}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <input data-testid="paypal-amount-input" type="number" min="5" value={amount} onChange={(e) => setAmount(e.target.value)} className={field} placeholder="USD amount" />
+        <button data-testid="paypal-pay-button" onClick={go} disabled={!cfg?.configured || Number(amount) < 5} className={btn("neon-cyan")}>PAY WITH PAYPAL</button>
+      </div>
+      <p className="text-[9px] text-term-muted">Settles straight into your ledger USD wallet; the AI engages automatically once funds are available.</p>
+    </Section>
+  );
+}
+
 function Deposit() {
   const [coin, setCoin] = useState("BTC");
   const [net, setNet] = useState("");
@@ -227,6 +257,7 @@ export default function RealWallet({ refresh, connected }) {
       ) : (
         <>
           {real && <Balances data={real} />}
+          <PayPalDeposit />
           <Deposit />
           <SendQR />
           <Transfer onDone={load} />

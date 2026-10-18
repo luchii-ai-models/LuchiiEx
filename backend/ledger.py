@@ -14,6 +14,7 @@ EPS = Decimal("0.00000001")
 TYPES = ("ASSET", "LIABILITY", "EQUITY", "REVENUE", "EXPENSE")
 DEBIT_NORMAL = ("ASSET", "EXPENSE")
 USER_CCY = ("USD", "USDT", "BTC", "ETH", "SOL")
+PERFORMANCE_FEE_RATE = 0.02  # 2% of realised profit per winning close → PERFORMANCE_FEES_USD
 
 SYSTEM_ACCOUNTS = [
     ("TREASURY_USD", "Treasury USD", "ASSET", "USD"), ("TREASURY_USDT", "Treasury USDT", "ASSET", "USDT"), ("TREASURY_BTC", "Treasury BTC", "ASSET", "BTC"),
@@ -287,9 +288,12 @@ async def record_trade_pnl(uid: str, trade_id: str, pnl, fee, asset: str, side: 
     """Realised P&L in USD terms: profit CR user wallet via TRADING_PNL; loss DR user wallet. Fee booked to EXCHANGE_FEES_USD."""
     pnl, fee = D(pnl), D(fee)
     lines = []
+    perf_fee = (pnl * Decimal(str(PERFORMANCE_FEE_RATE))).quantize(Decimal("0.000001")) if pnl > EPS else Decimal(0)
     if pnl > EPS:
         lines += [{"account": "OKX_MASTER_USD", "debit": pnl}, {"account": "TRADING_PNL_USD", "credit": pnl},
                   {"account": "TRADING_PNL_USD", "debit": pnl}, {"account": user_code(uid, "USD"), "credit": pnl}]
+        if perf_fee > EPS:
+            lines += [{"account": user_code(uid, "USD"), "debit": perf_fee}, {"account": "PERFORMANCE_FEES_USD", "credit": perf_fee}]
     elif pnl < -EPS:
         lines += [{"account": user_code(uid, "USD"), "debit": -pnl}, {"account": "OKX_MASTER_USD", "credit": -pnl}]
     if fee > EPS:
@@ -297,7 +301,7 @@ async def record_trade_pnl(uid: str, trade_id: str, pnl, fee, asset: str, side: 
     if not lines:
         return None
     try:
-        return await post_journal(lines, source="OKX", description=f"{side} {qty} {asset} @ {price} · pnl {pnl} fee {fee}",
+        return await post_journal(lines, source="OKX", description=f"{side} {qty} {asset} @ {price} · pnl {pnl} fee {fee} · perf fee {perf_fee}",
                                   reference_type="TRADE_SETTLEMENT", reference_id=trade_id, idempotency_key=f"trade:{trade_id}", actor_id=uid)
     except LedgerError:
         # user wallet not funded in-ledger yet (pre-ledger balances) → book against pending so nothing is silently lost

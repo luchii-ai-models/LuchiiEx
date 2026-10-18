@@ -12,7 +12,7 @@ import strategy
 from db import db, now_ms
 from exchange_service import (all_balances, cancel_stop, client_from_doc, ensure_funds, friendly, market_order, place_oco, place_stop,
                               resolve_symbol, stop_status, total_usd)
-from market import SNAPSHOT
+from market import ASSETS as MARKET_ASSETS, SNAPSHOT
 
 START_CASH = 10000.0
 log_ = logging.getLogger("engine")
@@ -604,6 +604,8 @@ async def tick_bot(bot: dict):
         await set_bot(uid, weights_ts=time.time(), agent_weights=AGENT_WEIGHTS[uid])
     if bot.get("pending"):
         return
+    if bot.get("autonomous", True):
+        bot = await autonomous_select(bot)
     for asset in bot.get("assets") or ["BTC"]:
         price = mkt(asset).get("price")
         if not price:
@@ -733,6 +735,51 @@ async def scheduler():
                 await tick_bot(bot)
             except Exception as e:
                 log_.exception("tick failed for %s: %s", bot.get("user_id"), e)
+
+
+async def autonomous_select(bot: dict) -> dict:
+    """AI picks strategy + markets itself from regime, volatility and its own rolling results. No manual switching."""
+    uid = bot["user_id"]
+    closed = await audit.closed(uid)
+    def pf(strat):
+        rows = [t for t in closed if t.get("strategy") == strat][-30:]
+        w = sum(t["pnl"] for t in rows if t.get("pnl", 0) > 0); l = -sum(t["pnl"] for t in rows if t.get("pnl", 0) < 0)
+        return (w / l if l else (9.9 if w else 1.0)), len(rows)
+    regimes, scores = {}, {}
+    for a in MARKET_ASSETS:
+        try:
+            i, _ = snapshot(a)
+        except Exception:  # noqa: BLE001
+            continue
+        regimes[a] = i.get("regime", "UNKNOWN")
+        d = luchii_signal(bot, a)
+        scores[a] = float(d.get("score") or d.get("confidence") or 0) * (0.5 if regimes[a] in strategy.NO_TRADE_REGIMES else 1.0) * (0.8 if a == "SOL" else 1.0)
+    held = [a for a in MARKET_ASSETS if pos_of(bot, a)["position_qty"] > 0]
+    ranked = sorted(scores, key=scores.get, reverse=True)
+    assets = sorted(set(held + ranked[:2])) if ranked else (bot.get("assets") or ["BTC"])
+    lead = ranked[0] if ranked else "BTC"
+    reg = regimes.get(lead, "UNKNOWN")
+    pf_agg, n_agg = pf("aggressive")
+    pf_std, _ = pf("luchii003")
+    if reg in ("TREND_BULL", "BREAKOUT"):
+        strat = "luchii003"
+    elif reg == "MEAN_REVERSION" and (n_agg < 10 or pf_agg >= 1.0):
+        strat = "aggressive"
+    elif reg in strategy.NO_TRADE_REGIMES:
+        strat = "luchii003"
+    else:
+        strat = "aggressive" if (pf_agg >= 1.1 and n_agg >= 10 and pf_agg >= pf_std) else "luchii003"
+    upd = {}
+    if strat != bot.get("strategy", "luchii003"):
+        upd.update(strategy=strat, aggressive=(strat == "aggressive"))
+    if assets != (bot.get("assets") or ["BTC"]):
+        upd.update(assets=assets)
+    if upd:
+        await set_bot(uid, **upd)
+        bot = await db.bots.find_one({"user_id": uid})
+        await log(db, uid, {"action": "HOLD", "engine": "system", "confidence": 1.0,
+                            "reason": f"AUTONOMOUS · {lead} regime {reg} · strategy → {'AGGRESSIVE SCALP' if strat == 'aggressive' else 'LUCHII_003'} (PF agg {pf_agg:.2f}/{n_agg}) · markets {', '.join(assets)}"}, SNAPSHOT.get("price"))
+    return bot
 
 
 async def autopilot_engage():

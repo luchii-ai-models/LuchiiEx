@@ -3,26 +3,14 @@ import { Play, Square, RotateCcw, Ban, Zap, ArrowLeftRight } from "lucide-react"
 import api from "../../lib/api";
 import { toast } from "sonner";
 
-function StrategyToggle({ bot, refresh }) {
-  const [busy, setBusy] = useState(false);
-  const cur = bot.strategy ?? "luchii003";
-  const aggr = cur === "aggressive";
-  const flip = async () => {
-    const next = aggr ? "luchii003" : "aggressive";
-    setBusy(true);
-    try {
-      await api.post("/bot/config", { strategy: next, aggressive: next === "aggressive" });
-      toast.success(next === "aggressive" ? "AGGRESSIVE SCALP · fewer filters, more trades, more fee risk" : "LUCHII_003 · strict filters, trades only on A-grade setups");
-      refresh();
-    } catch (e) { toast.error(e.response?.data?.detail || "Switch failed"); }
-    finally { setBusy(false); }
-  };
+function StrategyToggle({ bot }) {
+  const aggr = (bot.strategy ?? "luchii003") === "aggressive";
   return (
-    <button data-testid="strategy-toggle" onClick={flip} disabled={busy} title="Tap to switch strategy · applies to the next entry, open positions keep being managed"
-      className={`mt-1 w-full flex items-center justify-between px-2 py-1 border text-[9px] tracking-[0.18em] transition-colors disabled:opacity-40 ${aggr ? "border-neon-amber text-neon-amber hover:bg-neon-amber/10" : "border-neon-cyan text-neon-cyan hover:bg-neon-cyan/10"}`}>
+    <div data-testid="strategy-auto" title="The AI picks strategy and markets itself from regime, volatility and its own rolling results"
+      className={`mt-1 w-full flex items-center justify-between px-2 py-1 border text-[9px] tracking-[0.18em] ${aggr ? "border-neon-amber text-neon-amber" : "border-neon-cyan text-neon-cyan"}`}>
       <span className="flex items-center gap-1"><Zap size={9} /> {aggr ? "AGGRESSIVE SCALP" : "LUCHII_003"}</span>
-      <span className="flex items-center gap-1 text-term-muted"><ArrowLeftRight size={9} /> {aggr ? "LUCHII_003" : "AGGRESSIVE"}</span>
-    </button>
+      <span className="flex items-center gap-1 text-term-muted"><ArrowLeftRight size={9} /> AUTO · {(bot.assets || ["BTC"]).join("/")}</span>
+    </div>
   );
 }
 
@@ -60,7 +48,7 @@ export default function BotStatusCard({ bot, refresh, highlightKill }) {
         </div>
       </div>
       <div className="mt-1 text-lg font-extrabold tracking-tighter">{bot.name}</div>
-      <StrategyToggle bot={bot} refresh={refresh} />
+      <StrategyToggle bot={bot} />
       <div className="panel-label text-[9px]">EQUITY (USD)</div>
       <div data-testid="bot-equity" className="tnum text-4xl font-extrabold text-neon-magenta text-glow-magenta leading-none mt-1">
         ${equity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}

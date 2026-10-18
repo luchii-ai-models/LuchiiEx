@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 import ledger
+import paypal
 import profile as prof
 import webhooks
 from auth import current_user
@@ -223,6 +224,42 @@ async def set_role(uid: str, body: RoleIn, user=Depends(require("*"))):
     await db.users.update_one({"_id": u["_id"]}, {"$set": {"role": body.role}})
     await ledger.audit_event(user["id"], "user", uid, "ROLE_CHANGE", {"role": u.get("role")}, {"role": body.role})
     return {"id": uid, "role": body.role}
+
+
+# ---------- PayPal deposits ----------
+class PaypalOrderIn(BaseModel):
+    amount: float = Field(ge=5, le=25000)
+    returnUrl: str
+    cancelUrl: str
+
+
+@r.get("/deposits/paypal/status")
+async def paypal_status(user=Depends(current_user)):
+    return {"configured": paypal.configured(), "env": __import__("os").environ.get("PAYPAL_ENV", "sandbox")}
+
+
+@r.post("/deposits/paypal/order", status_code=201)
+async def paypal_order(body: PaypalOrderIn, user=Depends(require("DEPOSIT"))):
+    if not paypal.configured():
+        raise HTTPException(503, {"code": "PROVIDER_NOT_CONFIGURED", "message": "PayPal is not configured yet (PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET)"})
+    try:
+        return await paypal.create_order(user["id"], body.amount, body.returnUrl, body.cancelUrl)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, {"code": "PAYPAL_ERROR", "message": str(e)[:300]})
+
+
+@r.post("/deposits/paypal/capture/{order_id}")
+async def paypal_capture(order_id: str, user=Depends(require("DEPOSIT"))):
+    if not paypal.configured():
+        raise HTTPException(503, {"code": "PROVIDER_NOT_CONFIGURED", "message": "PayPal not configured"})
+    try:
+        out = await paypal.capture(user["id"], order_id)
+    except ledger.LedgerError as e:
+        _err(e)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, {"code": "PAYPAL_ERROR", "message": str(e)[:300]})
+    await ledger.audit_event(user["id"], "deposit", order_id, "PAYPAL_CAPTURE", None, out)
+    return out
 
 
 # ---------- webhooks (unauthenticated, signature-verified) ----------
