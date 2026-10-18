@@ -4,8 +4,8 @@ import math
 RULES = {
     "entry": {"rsi_min": 55, "trend_pct_min": 0.08, "volume_ratio_min": 1.5, "adx_min": 25, "score_min": 80},
     "risk": {"atr_stop_mult": 1.5, "bull": 0.01, "bear": 0.0075, "score90": 0.01, "score80": 0.01, "score70": 0.005},
-    "tiers": [(1.0, 0.25), (2.5, 0.25), (5.0, 0.25)],
-    "trail": {"break_even": 0.5, "profit_lock": 1.0, "lock_mult": 1.0025, "atr3_at": 2.0, "atr2_at": 5.0},
+    "tiers": [(1.0, 0.25), (2.0, 0.25)],
+    "trail": {"break_even": 0.5, "profit_lock": 1.0, "lock_mult": 1.0025, "atr3_at": 2.0, "atr2_at": 5.0, "runner_atr": 2.5},
 }
 
 _LOCAL = threading.local()
@@ -203,7 +203,7 @@ def position_size(cash, risk, entry, stop):
     return min(cash * risk / dist, cash / entry)
 
 
-def update_stop(entry, highest, pnl_pct, atr_v, existing):
+def update_stop(entry, highest, pnl_pct, atr_v, existing, runner: bool = False):
     t = rules()["trail"]
     stop = existing
     if pnl_pct >= t["break_even"]:
@@ -211,6 +211,8 @@ def update_stop(entry, highest, pnl_pct, atr_v, existing):
     if pnl_pct >= t["profit_lock"]:
         stop = max(stop, entry * t["lock_mult"])
     if atr_v:
+        if runner:
+            stop = max(stop, highest - atr_v * t["runner_atr"])
         if pnl_pct >= t["atr3_at"]:
             stop = max(stop, highest - atr_v * 3)
         if pnl_pct >= t["atr2_at"]:
@@ -230,17 +232,20 @@ def evaluate(asset: str, i: dict, btc: dict, pos: dict, weights: dict | None = N
         pnl = (price - entry) / entry * 100
         atr_v = pos.get("entry_atr") or (None if nan(i.get("atr")) else i["atr"])
         existing = pos.get("stop_price") or (entry - atr_v * rules()["risk"]["atr_stop_mult"] if atr_v else 0)
-        stop = update_stop(entry, highest, pnl, atr_v, existing)
         tiers = int(pos.get("tiers_done") or 0)
+        n_tiers = len(rules()["tiers"])
+        stop = update_stop(entry, highest, pnl, atr_v, existing, runner=tiers >= n_tiers)
         fee = float(pos.get("fee_pct") or 0)
+        r_pct = (atr_v * rules()["risk"]["atr_stop_mult"] / entry * 100) if atr_v else 0
         if stop and price <= stop:
-            why = "STOP" if stop < entry else "BREAK-EVEN STOP" if stop == entry else "TRAILING STOP"
+            why = "STOP" if stop < entry else "BREAK-EVEN STOP" if stop == entry else f"TRAILING STOP ({rules()['trail']['runner_atr']}×ATR runner)" if tiers >= n_tiers else "TRAILING STOP"
             return {**base, "action": "SELL", "stop": stop, "reason": f"[{asset}] {why} hit ${stop:,.2f} · {pnl:+.2f}% · peak ${highest:,.2f}"}
-        if tiers < len(rules()["tiers"]) and pnl >= rules()["tiers"][tiers][0] + fee:
+        if tiers < n_tiers and r_pct and pnl >= rules()["tiers"][tiers][0] * r_pct + fee:
             frac = rules()["tiers"][tiers][1] / (1 - 0.25 * tiers)
             return {**base, "action": "SELL", "fraction": round(frac, 4), "tier": tiers + 1, "stop": stop,
-                    "reason": f"[{asset}] TP{tiers + 1} +{rules()['tiers'][tiers][0]}%{f' +{fee:.2f}% fees' if fee else ''} hit ({pnl:+.2f}%) · selling 25% of original · stop → ${stop:,.2f}"}
-        return {**base, "action": "HOLD", "stop": stop, "reason": f"[{asset}] in position {pnl:+.2f}% · stop ${stop:,.2f} · TP{tiers + 1} next · regime {i.get('regime')}"}
+                    "reason": f"[{asset}] +{rules()['tiers'][tiers][0]:.0f}R hit ({pnl:+.2f}% · 1R = {r_pct:.2f}%) · scale out 25% · stop → ${stop:,.2f}"}
+        nxt = f"+{rules()['tiers'][tiers][0]:.0f}R next" if tiers < n_tiers else f"runner · {rules()['trail']['runner_atr']}×ATR trail"
+        return {**base, "action": "HOLD", "stop": stop, "reason": f"[{asset}] in position {pnl:+.2f}% · stop ${stop:,.2f} · {nxt} · regime {i.get('regime')}"}
     if warm:
         return {**base, "action": "HOLD", "reason": f"[{asset}] warming up indicators (need 200 candles)"}
     score = base["score"]

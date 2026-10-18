@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { X, Link2, AlertTriangle, Unplug, Bell, Shield, Wallet, Sliders, Send, Server, Radio, Coins, HelpCircle, Sun, Moon, BookOpen } from "lucide-react";
+import { X, Link2, AlertTriangle, Unplug, Bell, Shield, Wallet, Sliders, Send, Server, Radio, Coins, HelpCircle, BookOpen } from "lucide-react";
 import LedgerTab from "./LedgerTab";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../context/ThemeContext";
@@ -46,8 +46,7 @@ export default function SettingsModal({ bot, onClose, refresh, initialTab = "con
               <option key={id} value={id} className="bg-term-surface text-white">{label}</option>
             ))}
           </select>
-          <button data-testid="theme-toggle-button" onClick={toggle} title="Toggle theme"
-            className="text-term-muted hover:text-neon-amber transition-colors">{theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}</button>
+          {/* theme toggle removed — terminal is dark only */}
           <button data-testid="open-help-button" onClick={() => navigate("/help")} title="Help center"
             className="text-term-muted hover:text-neon-cyan transition-colors"><HelpCircle size={16} /></button>
         </div>

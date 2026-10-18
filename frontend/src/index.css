@@ -97,37 +97,3 @@ body {
 }
 .animate-spin-slow { animation: coin-turn 4.5s ease-in-out infinite; transform-style: preserve-3d; }
 
-/* ------------------------------------------------------ Light theme (clean, high-contrast) */
-html.light { color-scheme: light; }
-html.light body { background: #e6e8ec; color: #12121a; }
-html.light ::selection { background: #a16207; color: #fff; }
-html.light ::-webkit-scrollbar-track { background: #dcdee3; }
-html.light ::-webkit-scrollbar-thumb { background: #a1620766; }
-html.light ::-webkit-scrollbar-thumb:hover { background: #a16207; }
-html.light ::placeholder { color: #9aa0ac !important; opacity: 1; }
-
-html.light .bg-black { background-color: #e6e8ec !important; }
-html.light .bg-term-surface { background-color: #ffffff !important; }
-html.light .panel { background: #ffffff; border-color: #cbccd4; }
-html.light .panel-glow {
-  border-color: #a16207;
-  box-shadow: 0 0 10px rgba(196,15,99,0.20), inset 0 0 6px rgba(196,15,99,0.05);
-}
-html.light .border-term-border { border-color: #cbccd4 !important; }
-html.light .panel-label { color: #4b4b57 !important; }
-
-/* text colours (incl. opacity variants) tuned for contrast on white */
-html.light [class*="text-white"] { color: #12121a !important; }
-html.light [class*="text-term-muted"] { color: #4b4b57 !important; }
-html.light [class*="text-neon-magenta"] { color: #a16207 !important; }
-html.light [class*="text-neon-cyan"] { color: #0369a1 !important; }
-html.light [class*="text-neon-green"] { color: #157347 !important; }
-html.light [class*="text-neon-red"] { color: #d61f2b !important; }
-html.light [class*="text-neon-amber"] { color: #9a5b00 !important; }
-html.light input, html.light textarea { color: #12121a !important; }
-html.light [class*="text-neon-green"] { color: #000000 !important; }
-html.light [class*="border-neon-green"] { border-color: #0f7a3d !important; }
-html.light [class*="bg-neon-green"] { background-color: #0f7a3d !important; }
-html.light .text-glow-magenta, html.light .text-glow-cyan, html.light .text-glow-green { text-shadow: none !important; }
-html.light .grain::before { opacity: 0.10; }
-

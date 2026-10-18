@@ -16,12 +16,10 @@ import SplashScreen from "./components/terminal/SplashScreen";
 // Single source of truth for the theme class: light everywhere EXCEPT the
 // landing/auth screen, which is always dark.
 function ThemeApplier() {
-  const { theme } = useTheme();
-  const location = useLocation();
   useEffect(() => {
-    const isAuth = location.pathname === "/login";
-    document.documentElement.classList.toggle("light", theme === "light" && !isAuth);
-  }, [theme, location.pathname]);
+    document.documentElement.classList.remove("light");
+    localStorage.removeItem("luchii_theme");
+  }, []);
   return null;
 }
 

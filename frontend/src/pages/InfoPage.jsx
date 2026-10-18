@@ -99,7 +99,7 @@ const CONTENT = {
     intro: "We use minimal cookies to keep you signed in and remember your preferences.",
     sections: [
       ["Essential", "Required for authentication and to keep the terminal working. These cannot be disabled."],
-      ["Preferences", "Remember your theme (light/dark) and layout choices locally in your browser."],
+      ["Preferences", "Remember your layout choices locally in your browser."],
       ["Analytics", "Aggregate, anonymous usage to improve the product. You can opt out below."],
     ],
   },

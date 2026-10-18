@@ -1,8 +1,7 @@
 import { useTheme } from "../../context/ThemeContext";
 
 export default function OrderBook({ snapshot }) {
-  const { theme } = useTheme();
-  const light = theme === "light";
+  const light = false;
   const bids = (snapshot?.bids || []).slice(0, 8);
   const asks = (snapshot?.asks || []).slice(0, 8);
   const maxSize = Math.max(1, ...bids.map((b) => b.size), ...asks.map((a) => a.size));

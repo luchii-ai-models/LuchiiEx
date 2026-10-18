@@ -627,6 +627,42 @@ async def sync_stops(ex, exchange: str, bot: dict):
         await arm_stop(ex, exchange, uid, asset, symbol, pos["position_qty"], want, price, want_tp, bot.get("partial_tp", True))
 
 
+async def reconcile(bot: dict):
+    """Every 60s: repair local position state against the exchange and cancel orphan orders older than 5 min."""
+    uid = bot["user_id"]
+    if time.time() - bot.get("reconcile_ts", 0) < 60:
+        return
+    await set_bot(uid, reconcile_ts=time.time())
+    creds = await get_creds(uid)
+    if not creds:
+        return
+    ex = client_from_doc(creds)
+    try:
+        bal = await all_balances(ex, creds["exchange"])
+        await sync_position(bot, bal, ex, creds["exchange"])
+        fresh = await db.bots.find_one({"user_id": uid})
+        protected = {leg["id"] for st in (fresh.get("exchange_stops") or {}).values() if st for leg in (st.get("legs") or [st])}
+        cancelled = 0
+        for asset in fresh.get("assets") or ["BTC"]:
+            symbol = await resolve_symbol(ex, creds["exchange"], asset)
+            for o in await ex.fetch_open_orders(symbol):
+                age = (now_ms() - int(o.get("timestamp") or now_ms())) / 1000
+                if o["id"] in protected or age < 300:
+                    continue
+                try:
+                    await ex.cancel_order(o["id"], symbol)
+                    cancelled += 1
+                except Exception as e:  # noqa: BLE001
+                    log_.warning("orphan cancel failed %s: %s", o["id"], e)
+        if cancelled:
+            await log(db, uid, {"action": "HOLD", "engine": "reconcile", "confidence": 1.0, "reason": f"RECONCILE · cancelled {cancelled} orphan order(s) older than 5 min"}, SNAPSHOT.get("price"))
+        await set_bot(uid, reconcile_ok_ts=time.time())
+    except Exception as e:  # noqa: BLE001
+        log_.warning("reconcile failed for %s: %s", uid, e)
+    finally:
+        await ex.close()
+
+
 async def refresh_live_equity(bot: dict):
     creds = await get_creds(bot["user_id"])
     if not creds:
@@ -797,6 +833,8 @@ async def scheduler():
         async for bot in db.bots.find({"status": "running"}):
             try:
                 await tick_bot(bot)
+                if bot["mode"] == "live":
+                    await reconcile(bot)
             except Exception as e:
                 log_.exception("tick failed for %s: %s", bot.get("user_id"), e)
 
