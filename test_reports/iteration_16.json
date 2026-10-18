@@ -1,0 +1,29 @@
+{
+  "summary": "Frontend-only test of the text/icon edits on the Luchii Ex login page and dashboard. Login: title 'LUCHII EX', PASSWORD label, white eye toggle (rgba(255,255,255,0.8)) switches the password field between hidden and visible, LOGIN button, 'Create new account? REGISTER' switches to CREATE ACCOUNT (callsign field appears) and back, Help with Login opens a panel with support@frasberg.com and closes it on the second click. Dashboard (admin): header shows LUCHII EX + REAL, AVAILABLE FUNDS/BTC/ETH/SOL/clock; no 'LUCHII 4.7', FRASBERG, IDLE or LIVE text; no theme/chat/help buttons in the header. The Settings modal header row has theme-toggle (html class ''->'light'->''), open-chat (-> /chat) and open-help (-> /help). Panel labels ◈ ACTIVE, ◈ EXCHANGE + OFF, ◈ LOG, STANDBY badge, #1 TRADER · STREAK, SIGNAL, STRATEGY and AGENT VOTE · VALIDATION are all present. Mobile 390x844: no horizontal overflow on login or dashboard, header is 390px wide and 53px tall. No console errors. The bot was not started.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Login.jsx mobile with help panel open", "issue": "The root container is 'h-screen overflow-hidden'. On 390x844, opening Help with Login pushes the content down: the help panel goes behind the absolute footer (panel bottom ~825px, footer starts ~760px), the logo is cut off at the top, and the page cannot be scrolled to read the rest of the help text.", "selector": "[data-testid='login-help-panel']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard right column", "issues": ["Each collapsible header (#1 TRADER · STREAK, SIGNAL, STRATEGY, AGENT VOTE · VALIDATION) repeats the same title as the card inside it, so every title shows twice."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Login.jsx: let the page scroll on small screens (e.g. min-h-screen + overflow-y-auto + bottom padding for the footer) so the help panel is not hidden behind the footer on mobile",
+    "Optional: remove the repeated card titles inside the dashboard collapsibles"
+  ],
+  "critical_code_review_comments": [
+    "The header subtitle 'COINBASE FEED · LUCHII ENGINE' is still shown on sm+ screens. It is acceptable, but confirm it matches the mockup.",
+    "The header shows a DRY badge when mode is not live. Only REAL was in the spec, so confirm DRY should stay."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A", "frontend": "100% of requested checks (1 low-priority mobile layout issue)"},
+  "test_credentials": "admin@gravia.io / Gravia@2026",
+  "seed_data_creation": "none",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Text/icon edits checked in iteration 16. Theme is stored in localStorage key luchii_theme; light mode adds the 'light' class to html. Never start the bot."
+}
