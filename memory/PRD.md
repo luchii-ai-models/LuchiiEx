@@ -212,3 +212,9 @@ User choices: copy from trade-bridge-73; use the env values exactly; no Emergent
 - backend/.env and frontend/.env were empty → repopulated from user-supplied values: PayPal (PAYPAL_ENV=live), ADMIN_EMAIL/PASSWORD, JWT_SECRET, ENCRYPTION_KEY, SOLANA_RPC_URL (Helius), TELEGRAM_BOT_TOKEN, WEBHOOK_CRON_SECRET, PREDICT_ENABLED=true, BOT_TICK_SECONDS=5 (user left blank).
 - REACT_APP_BACKEND_URL set to this container's preview URL (219a8099-...preview.emergentagent.com).
 - Backend deps installed; litellm/emergentintegrations pin conflict is harmless (neither is imported). Server imports OK, /api health 200, admin login works. Admin seed is idempotent — existing user accounts & balances are never wiped (preview DB only holds the seeded admin here; production data untouched).
+
+## Implemented (2026-10-19 — Predict Streak Alerts)
+- predict.py: win_streak(uid) (consecutive AI-predict wins, stops at first loss) and _notify(uid,text) (best-effort Telegram via alerts.notify, honours alerts_enabled + telegram_chat_id, no-op if unlinked).
+- settle(): on AUTO (AI) contracts, pings Telegram on WON (with 🔥 win-streak count + net profit) and on LOST (streak reset).
+- auto_tick(): pings Telegram when the AI opens an auto contract (asset/direction/stake/duration/multiplier/conviction).
+- Backend regression tested: predict status/place/list endpoints OK, settlement + auto workers run clean, no exceptions from alert hooks.

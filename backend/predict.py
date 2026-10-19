@@ -83,6 +83,30 @@ async def place(uid: str, asset: str, direction: str, stake, duration: int, idem
     return doc
 
 
+async def win_streak(uid: str) -> int:
+    """Consecutive AI-predict wins (most recent first), stops at the first loss. PUSH is skipped."""
+    rows = await db.predict_contracts.find(
+        {"user_id": uid, "auto": True, "status": {"$in": ["WON", "LOST"]}},
+        {"_id": 0, "status": 1, "settledAt": 1}).sort("settledAt", -1).to_list(100)
+    streak = 0
+    for r in rows:
+        if r.get("status") == "WON":
+            streak += 1
+        else:
+            break
+    return streak
+
+
+async def _notify(uid: str, text: str):
+    """Best-effort Telegram ping; honours the user's alerts toggle + linked chat."""
+    try:
+        import alerts
+        bot = await db.bots.find_one({"user_id": uid}, {"_id": 0, "alerts_enabled": 1, "telegram_chat_id": 1})
+        await alerts.notify(bot, text)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 async def settle(cid: str) -> dict:
     c = await db.predict_contracts.find_one({"id": cid}, {"_id": 0})
     if not c or c["status"] != "OPEN":
@@ -106,6 +130,14 @@ async def settle(cid: str) -> dict:
                                    reference_id=cid, idempotency_key=f"predict:settle:{cid}", actor_id="SYSTEM")
     upd = {"status": result, "exitPrice": px, "settledAt": now_ms(), "settleJournalId": je["id"], "payout": float(payout) if result == "WON" else (float(stake) if result == "PUSH" else 0.0)}
     await db.predict_contracts.update_one({"id": cid, "status": "OPEN"}, {"$set": upd})
+    if c.get("auto") and result in ("WON", "LOST"):
+        if result == "WON":
+            streak = await win_streak(c["user_id"])
+            net = payout - stake
+            fire = "🔥" * min(max(streak, 1), 6)
+            await _notify(c["user_id"], f"✅ AI PREDICT WON — {c['asset']} {c['direction']} · back ${float(payout):.2f} (net +${float(net):.2f})\n{fire} {streak} win streak")
+        else:
+            await _notify(c["user_id"], f"❌ AI PREDICT lost — {c['asset']} {c['direction']} · -${float(stake):.2f} · streak reset")
     return {**c, **upd}
 
 
@@ -209,6 +241,7 @@ async def auto_tick():
                 from engine import log as elog
                 await elog(db, uid, {"action": "HOLD", "engine": "predict", "confidence": conf,
                                      "reason": f"[{asset}] AI PREDICT {direction} · ${stake} for {AUTO_DURATION}s @ {c['multiplier']}x · conviction {conf * 100:.0f}%"}, c["entryPrice"], asset=asset)
+                await _notify(uid, f"🤖 AI PREDICT opened — {asset} {direction} · ${stake} for {AUTO_DURATION}s @ {c['multiplier']}x · conviction {conf * 100:.0f}%")
             except ledger.LedgerError:
                 continue
 
