@@ -7,7 +7,7 @@ import uuid
 import pytest
 import requests
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://frasberg-luchii.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://luchii-trade-bot.preview.emergentagent.com").rstrip("/")
 ADMIN_EMAIL = "admin@gravia.io"
 ADMIN_PASSWORD = "Gravia@2026"
 

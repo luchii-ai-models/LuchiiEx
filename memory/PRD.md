@@ -1,7 +1,7 @@
 # Frasberg | Luchii Trading Bot — PRD
 
 ## Original problem statement
-"clone all frontend and backend wire back system as is." Source: https://trade-bridge-73.preview.emergentagent.com/login. Env values given by the user: ADMIN_EMAIL admin@gravia.io, ADMIN_PASSWORD Gravia@2026, BOT_TICK_SECONDS 12, ENCRYPTION_KEY, JWT_SECRET, TELEGRAM_BOT_TOKEN.
+"clone all frontend and backend wire back system as is." Source: https://luchii-trade-bot.preview.emergentagent.com/login. Env values given by the user: ADMIN_EMAIL admin@gravia.io, ADMIN_PASSWORD Gravia@2026, BOT_TICK_SECONDS 12, ENCRYPTION_KEY, JWT_SECRET, TELEGRAM_BOT_TOKEN.
 User choices: copy from trade-bridge-73; use the env values exactly; no Emergent Universal Key (keep the Luchii model names); a 1:1 copy with no differences.
 
 ## Architecture
@@ -206,3 +206,9 @@ User choices: copy from trade-bridge-73; use the env values exactly; no Emergent
 - ETH 5m 14d: REJECT (8 trades, PF 0.89, −0.4%) vs 1m PF 0.19. Still no PROMOTE anywhere; live OKX gate closed.
 - Predict funds: predict.total_funds = ledger USD + (bot.live_equity − mirrored); ensure_funds() auto-posts DR EXCHANGE_MIRROR_USD / CR user wallet before a stake (no more "insufficient balance"). Auto-predict now 3s contracts, stake 100% of funds (cap $100), 25% daily-loss pause (env PREDICT_AUTO_DURATION / PREDICT_AUTO_STAKE_PCT / PREDICT_DAILY_LOSS_PCT). Verified Luchii_002 ($17.42 OKX) placed $5 and WON $9, trial balance OK.
 - RISK NOTE: mirror is a book entry — house pays Predict wins while the user's cash physically sits on OKX; treasury must sweep.
+
+## Re-imported & restored (2026-10-19)
+- Imported from GitHub (luchii-trader @ cd840d3); working tree already in sync with origin/main.
+- backend/.env and frontend/.env were empty → repopulated from user-supplied values: PayPal (PAYPAL_ENV=live), ADMIN_EMAIL/PASSWORD, JWT_SECRET, ENCRYPTION_KEY, SOLANA_RPC_URL (Helius), TELEGRAM_BOT_TOKEN, WEBHOOK_CRON_SECRET, PREDICT_ENABLED=true, BOT_TICK_SECONDS=5 (user left blank).
+- REACT_APP_BACKEND_URL set to this container's preview URL (219a8099-...preview.emergentagent.com).
+- Backend deps installed; litellm/emergentintegrations pin conflict is harmless (neither is imported). Server imports OK, /api health 200, admin login works. Admin seed is idempotent — existing user accounts & balances are never wiped (preview DB only holds the seeded admin here; production data untouched).
