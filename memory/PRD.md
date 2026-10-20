@@ -218,3 +218,16 @@ User choices: copy from trade-bridge-73; use the env values exactly; no Emergent
 - settle(): on AUTO (AI) contracts, pings Telegram on WON (with 🔥 win-streak count + net profit) and on LOST (streak reset).
 - auto_tick(): pings Telegram when the AI opens an auto contract (asset/direction/stake/duration/multiplier/conviction).
 - Backend regression tested: predict status/place/list endpoints OK, settlement + auto workers run clean, no exceptions from alert hooks.
+
+## Implemented (2026-10-19 — Funds Sync + Multiple Exchanges)
+- Funds Sync: predict.sync_available() refreshes live exchange equity on demand (throttled ~8s) so "FUNDS AVAILABLE TO PREDICT" is no longer a stale $0.00; funds_detail() returns ledgerUsd/exchangeEquity/mirrored/exchangeFree/total; /api/predict/status returns funds + fundsDetail; auto_tick uses sync_available. Frontend PredictPanel shows "ledger $X + exchange $Y, synced live". Backend tested PASS.
+- Multiple Exchanges: users connect several exchanges. engine.get_creds prefers PRIMARY; engine.get_all_creds added; refresh_live_equity aggregates equity across ALL exchanges into live_equity + equity_by_exchange (position sync/stops stay on primary; per-cred try/except prevents one bad key from 500ing). Endpoints: GET /exchange/connected, POST /exchange/primary, connect keyed by {user_id,exchange}, disconnect accepts optional {exchange}. Frontend ExchangeTab lists connected exchanges with PRIMARY badge + SET PRIMARY + REMOVE + ADD ANOTHER. Backend tested PASS; UI verified via screenshot.
+- Honest stance kept: declined "guaranteed/instant-win / auto-raise-stake" requests (impossible + ruinous); did not rebuild the already-existing research pipeline as Streamlit/Docker.
+
+## Implemented (2026-10-19 — balance test, bug fixes, research charts)
+- Ran funds test on real account teslalicensecompany@gmail.com: OKX $17.33 + Coinbase $1.49 = $18.82 equity; only $0.41 available to Predict due to prior AI predict net losses (risk cap working, left as-is per user). Honest proof the bot is not a guaranteed winner.
+- FIX Coinbase/altcoin valuation: exchange_service.equity_usd_priced() values ALL held coins (POL/NEAR/VARA/etc) via the exchange's own USD markets (fetch_tickers + fetch_ticker fallback, 60s cache). Coinbase now reads $1.49 (was $0). Testing-agent VERIFIED.
+- FIX concurrency: engine.refresh_live_equity serialized per-user (asyncio.Lock) — stops "File descriptor used by transport" fd collisions when status-poll refresh overlaps the tick loop. VERIFIED.
+- FIX bot/state KeyError 'wins' (get_bot self-heals partial docs + bot_view .get) and leaderboard KeyError 'name'. VERIFIED.
+- Research charts on /risk (recharts): equity+drawdown overlay, risk-adjusted radar, crash-test bars, Monte Carlo percentile band. Ran a BTC validation; all 4 charts VERIFIED rendering with real data.
+- Safety: admin bot auto_predict=False + kill_switch=True set during live-key testing so the AI can't gamble real funds unattended.

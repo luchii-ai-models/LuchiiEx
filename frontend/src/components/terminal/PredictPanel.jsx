@@ -20,6 +20,10 @@ export default function PredictPanel() {
       toast.success(`${asset} ${direction} · $${r.data.stake} → $${r.data.potentialPayout} in ${dur}s`); load();
     } catch (e) { toast.error(e.response?.data?.detail?.message || "rejected"); }
   };
+  const reload = async () => {
+    try { const r = await api.post("/predict/reload"); toast.success(`Reloaded buying power to $${Number(r.data.available).toFixed(2)}`); load(); }
+    catch (e) { toast.error(e.response?.data?.detail?.message || "reload failed"); }
+  };
   if (!st) return null;
   const q = st.quotes?.[asset] || {};
   const mult = q.payouts?.[dur];
@@ -29,7 +33,11 @@ export default function PredictPanel() {
       {st.enabled && (
         <div className="text-[10px] border border-neon-green/40 rounded p-2 text-neon-green" data-testid="auto-predict-status">
           AI AUTO-PREDICT {st.autoPredict ? "ON" : "OFF"} · {st.autoRules.duration}s contracts on its own when conviction ≥ {Math.round(st.autoRules.minConfidence * 100)}% · stakes {Math.round(st.autoRules.stakePct * 100)}% of all funds in the system (max ${st.autoRules.maxStake}) · pauses after a {Math.round(st.autoRules.dailyLossPct * 100)}% daily loss
-          <div className="text-white mt-1 tnum" data-testid="predict-funds">FUNDS AVAILABLE TO PREDICT ${Number(st.funds || 0).toFixed(2)} <span className="text-term-muted">(ledger USD + exchange equity, mirrored automatically)</span></div>
+          <div className="mt-1 space-y-0.5" data-testid="predict-funds">
+            <div className="text-white tnum">AVAILABLE TO PREDICT <span className="text-neon-green font-bold">${Number(st.funds || 0).toFixed(2)}</span></div>
+            <div className="text-[9px] text-term-muted tnum">Exchange balance ${Number(st.fundsDetail?.exchangeEquity || 0).toFixed(2)} · Predict wallet ${Number(st.fundsDetail?.ledgerUsd || 0).toFixed(2)} · un-mirrored ${Number(st.fundsDetail?.exchangeFree || 0).toFixed(2)}</div>
+            <div className="text-[8px] text-term-muted leading-tight">Exchange balance is your real money on the exchange. The Predict wallet reflects past Predict wins/losses. Only the available amount can be staked — it is not the same as your exchange balance.</div>
+          </div>
           {Object.entries(st.quotes).some(([, q]) => q.aiSignal) && <div className="text-white mt-1">signal now: {Object.entries(st.quotes).filter(([, q]) => q.aiSignal).map(([a, q]) => `${a} ${q.aiSignal}`).join(" · ")}</div>}
         </div>
       )}

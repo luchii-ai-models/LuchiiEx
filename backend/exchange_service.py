@@ -1,8 +1,11 @@
 import asyncio
+import logging
 import os
 
 import ccxt.async_support as ccxt
 from cryptography.fernet import Fernet
+
+log = logging.getLogger("exchange")
 
 EXCHANGES = ["binance", "binanceus", "coinbase", "kraken", "okx", "bybit", "kucoin", "bitget", "gateio",
              "mexc", "bitfinex", "bitstamp", "gemini", "htx", "cryptocom"]
@@ -151,6 +154,66 @@ def total_usd(balances: dict, price: float) -> float:
     tot = 0.0
     for b in balances.values():
         tot += sum(float(b.get(c) or 0) for c in ("USD", "USDT", "USDC")) + sum(float(b.get(a) or 0) * p for a, p in px.items())
+    return round(tot, 2)
+
+
+STABLES = ("USD", "USDT", "USDC", "DAI", "PYUSD", "USDD", "TUSD", "USDP")
+_px_cache: dict = {}  # "SYMBOL" -> (price, ts)
+
+
+async def equity_usd_priced(ex, exchange: str, balances: dict, price: float) -> float:
+    """USD value of ALL held assets: stablecoins at face, BTC/ETH/SOL from the live snapshot,
+    every other coin priced via the exchange's own USD market (cached ~60s to avoid rate limits)."""
+    import time
+    px = asset_prices(price)
+    holdings: dict = {}
+    for b in balances.values():
+        for cur, amt in b.items():
+            a = float(amt or 0)
+            if a:
+                holdings[cur] = holdings.get(cur, 0.0) + a
+    tot, need = 0.0, []
+    for cur, amt in holdings.items():
+        if cur in STABLES:
+            tot += amt
+        elif px.get(cur):
+            tot += amt * px[cur]
+        elif amt > 0:
+            need.append(cur)
+    if need:
+        try:
+            await ex.load_markets()
+            now = time.time()
+            # resolve each coin to a market + USD multiplier (stable quotes = 1; crypto quotes routed via snapshot price)
+            routes = {"USD": 1.0, "USDT": 1.0, "USDC": 1.0, "DAI": 1.0, "BTC": px.get("BTC") or 0.0, "ETH": px.get("ETH") or 0.0, "SOL": px.get("SOL") or 0.0}
+            want = {}  # cur -> (symbol, usd_multiplier)
+            for cur in need:
+                for q, mult in routes.items():
+                    s = f"{cur}/{q}"
+                    if s in ex.markets and (mult or q in ("USD", "USDT", "USDC", "DAI")):
+                        want[cur] = (s, mult)
+                        break
+            symbols = {sm[0] for sm in want.values()}
+            missing = [s for s in symbols if not (_px_cache.get(s) and now - _px_cache[s][1] < 60)]
+            if missing:
+                fetched = {}
+                if ex.has.get("fetchTickers"):
+                    try:
+                        fetched = await ex.fetch_tickers(missing)
+                    except Exception:  # noqa: BLE001
+                        fetched = {}
+                for s in missing:
+                    t = fetched.get(s)
+                    if not t:
+                        try:
+                            t = await ex.fetch_ticker(s)
+                        except Exception:  # noqa: BLE001
+                            t = {}
+                    _px_cache[s] = (float((t or {}).get("last") or (t or {}).get("close") or 0), now)
+            for cur, (s, mult) in want.items():
+                tot += holdings[cur] * (_px_cache.get(s) or (0.0, 0))[0] * (mult or 1.0)
+        except Exception as e:  # noqa: BLE001
+            log.warning("asset pricing failed (%s): %s", exchange, e)
     return round(tot, 2)
 
 

@@ -27,7 +27,7 @@ import webhooks  # noqa: E402
 from auth import (check_lockout, clear_fails, create_token, current_user, hash_password, public_user,  # noqa: E402
                   record_fail, seed_admin, verify_password)
 from db import db, now_ms  # noqa: E402
-from engine import DEFAULT_BOT, get_creds, set_bot, with_exchange  # noqa: E402
+from engine import DEFAULT_BOT, get_all_creds, get_creds, set_bot, with_exchange  # noqa: E402
 from exchange_service import (ACCOUNTS, EXCHANGES, all_balances, encrypt, friendly, market_order,  # noqa: E402
                               nonzero_balances, permissions, resolve_symbol, total_usd, verify)
 import web3bal  # noqa: E402
@@ -93,6 +93,10 @@ async def me(user=Depends(current_user)):
 async def get_bot(user) -> dict:
     bot = await db.bots.find_one({"user_id": user["id"]})
     if bot:
+        missing = {k: v for k, v in DEFAULT_BOT.items() if k not in bot}
+        if missing:
+            await db.bots.update_one({"user_id": user["id"]}, {"$set": missing})
+            bot = await db.bots.find_one({"user_id": user["id"]})
         return bot
     n = await db.bots.count_documents({}) + 1
     doc = {**DEFAULT_BOT, "user_id": user["id"], "name": f"Luchii_{n:03d}", "created_at": iso_now()}
@@ -105,8 +109,9 @@ async def bot_view(bot: dict) -> dict:
     out = {k: v for k, v in bot.items() if k not in ("_id", "pending", "metaapi", "telegram_chat_id")}
     if out.get("pocketoption"):
         out["pocketoption"] = {k: v for k, v in out["pocketoption"].items() if k != "ssid"}
-    done = bot["wins"] + bot["losses"]
-    out.update(equity=engine.equity(bot), win_rate=round(bot["wins"] / done * 100) if done else 0,
+    wins, losses = bot.get("wins", 0), bot.get("losses", 0)
+    done = wins + losses
+    out.update(equity=engine.equity(bot), win_rate=round(wins / done * 100) if done else 0,
                exchange_connected=bool(creds), exchange=creds["exchange"] if creds else None)
     return out
 
@@ -404,7 +409,7 @@ async def leaderboard(user=Depends(current_user)):
     for b in bots:
         p = pred.get(b["user_id"], {})
         trade, pnet = round(b.get("realized_pnl", 0), 2), round(p.get("net", 0), 2)
-        rows.append({"name": b["name"], "pnl": round(trade + pnet, 2), "tradePnl": trade, "predictNet": pnet, "predictWon": p.get("won", 0), "predictN": p.get("n", 0)})
+        rows.append({"name": b.get("name") or "Trader", "pnl": round(trade + pnet, 2), "tradePnl": trade, "predictNet": pnet, "predictWon": p.get("won", 0), "predictN": p.get("n", 0)})
     rows.sort(key=lambda x: (-x["pnl"], x["name"]))
     return [{"rank": i + 1, **x} for i, x in enumerate(rows[:50])]
 
@@ -443,12 +448,40 @@ async def exchange_connect(body: ExchangeIn, user=Depends(current_user)):
         bal, host, perms = await verify(body.exchange, body.api_key.strip(), secret, body.password.strip())
     except Exception as e:
         bad(f"Exchange verification failed: {friendly(e)}")
-    await db.exchange_credentials.update_one({"user_id": user["id"]}, {"$set": {
+    has_other_primary = await db.exchange_credentials.find_one(
+        {"user_id": user["id"], "primary": True, "exchange": {"$ne": body.exchange}}, {"_id": 1})
+    is_primary = has_other_primary is None
+    await db.exchange_credentials.update_one({"user_id": user["id"], "exchange": body.exchange}, {"$set": {
         "user_id": user["id"], "exchange": body.exchange, "api_key": encrypt(body.api_key.strip()), "hostname": host,
-        "secret": encrypt(secret), "password": encrypt(body.password.strip()), "permissions": perms, "created_at": iso_now()}}, upsert=True)
+        "secret": encrypt(secret), "password": encrypt(body.password.strip()), "permissions": perms, "created_at": iso_now(),
+        "primary": is_primary}}, upsert=True)
     await set_bot(user["id"], mode="live", start_equity=None, start_ts=None)
     await engine.refresh_live_equity({"user_id": user["id"]})
-    return {"ok": True, "balances": nonzero_balances(bal), "permissions": perms, "hostname": host, "warnings": perm_warnings(perms)}
+    return {"ok": True, "balances": nonzero_balances(bal), "permissions": perms, "hostname": host, "warnings": perm_warnings(perms), "primary": is_primary}
+
+
+@api.get("/exchange/connected")
+async def exchange_connected(user=Depends(current_user)):
+    creds = await get_all_creds(user["id"])
+    bot = await db.bots.find_one({"user_id": user["id"]}, {"_id": 0, "equity_by_exchange": 1})
+    eqx = (bot or {}).get("equity_by_exchange") or {}
+    return [{"exchange": c["exchange"], "hostname": c.get("hostname"), "permissions": c.get("permissions"),
+             "primary": bool(c.get("primary")), "equity": eqx.get(c["exchange"]), "created_at": c.get("created_at")}
+            for c in sorted(creds, key=lambda c: (not c.get("primary"), c.get("exchange", "")))]
+
+
+class PrimaryIn(BaseModel):
+    exchange: str
+
+
+@api.post("/exchange/primary")
+async def exchange_primary(body: PrimaryIn, user=Depends(current_user)):
+    if not await db.exchange_credentials.find_one({"user_id": user["id"], "exchange": body.exchange}, {"_id": 1}):
+        bad("Exchange not connected")
+    await db.exchange_credentials.update_many({"user_id": user["id"]}, {"$set": {"primary": False}})
+    await db.exchange_credentials.update_one({"user_id": user["id"], "exchange": body.exchange}, {"$set": {"primary": True}})
+    await engine.refresh_live_equity({"user_id": user["id"]})
+    return {"ok": True, "primary": body.exchange}
 
 
 def perm_warnings(perms):
@@ -557,9 +590,27 @@ async def exchange_test_order(user=Depends(current_user)):
     return result
 
 
+class DisconnectIn(BaseModel):
+    exchange: Optional[str] = None
+
+
 @api.post("/exchange/disconnect")
-async def exchange_disconnect(user=Depends(current_user)):
-    await db.exchange_credentials.delete_one({"user_id": user["id"]})
+async def exchange_disconnect(body: Optional[DisconnectIn] = None, user=Depends(current_user)):
+    ex_name = body.exchange if body else None
+    if ex_name:
+        was = await db.exchange_credentials.find_one({"user_id": user["id"], "exchange": ex_name}, {"primary": 1})
+        await db.exchange_credentials.delete_one({"user_id": user["id"], "exchange": ex_name})
+        if was and was.get("primary"):
+            nxt = await db.exchange_credentials.find_one({"user_id": user["id"]}, {"exchange": 1})
+            if nxt:
+                await db.exchange_credentials.update_one({"user_id": user["id"], "exchange": nxt["exchange"]}, {"$set": {"primary": True}})
+        remaining = await db.exchange_credentials.count_documents({"user_id": user["id"]})
+        if remaining == 0:
+            await set_bot(user["id"], status="stopped", live_equity=None, start_equity=None, start_ts=None)
+        else:
+            await engine.refresh_live_equity({"user_id": user["id"]})
+        return {"ok": True, "removed": ex_name, "remaining": remaining}
+    await db.exchange_credentials.delete_many({"user_id": user["id"]})
     await set_bot(user["id"], status="stopped", live_equity=None, start_equity=None, start_ts=None)
     return {"ok": True}
 

@@ -1,8 +1,88 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, ShieldCheck, ShieldAlert, Play, RotateCcw } from "lucide-react";
+import {
+  ResponsiveContainer, ComposedChart, Line, Area, BarChart, Bar, Cell,
+  RadarChart, Radar, PolarGrid, PolarAngleAxis, XAxis, YAxis, Tooltip, CartesianGrid,
+} from "recharts";
 import api from "../lib/api";
 import { toast } from "sonner";
+
+const AX = { fontSize: 9, fill: "#6b7280" };
+const TT = { background: "#050505", border: "1px solid #1f2937", fontSize: 11, color: "#fff" };
+const clamp = (v, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, v));
+
+function RiskCharts({ r }) {
+  const bt = r.backtest || {}, mc = r.monte_carlo || {};
+  const eq = r.equity_curve || [], dd = r.drawdown_curve || [];
+  const overlay = eq.map((v, i) => ({ i, equity: v, dd: dd[i] ?? null }));
+  const stress = (r.stress || []).map((s) => ({ name: s.scenario.replace(/_/g, " "), loss: Number(s.loss_pct) || 0, survived: s.survived }));
+  const radar = [
+    { metric: "Sharpe", v: clamp(((bt.sharpe_ratio || 0) / 3) * 100) },
+    { metric: "Sortino", v: clamp(((bt.sortino_ratio || 0) / 3) * 100) },
+    { metric: "Profit Factor", v: clamp(((bt.profit_factor == null ? 2 : bt.profit_factor) / 2) * 100) },
+    { metric: "Win Rate", v: clamp((bt.win_rate || 0) * 100) },
+    { metric: "DD Headroom", v: clamp(((25 - (bt.max_drawdown || 0)) / 25) * 100) },
+    { metric: "MC Survival", v: clamp((mc.survival_rate || 0) * 100) },
+  ];
+  const band = [
+    { name: "Worst", v: mc.worst_return }, { name: "P5", v: mc.p5 }, { name: "Median", v: mc.median_return },
+    { name: "P95", v: mc.p95 }, { name: "Best", v: mc.best_return },
+  ].filter((d) => d.v !== undefined && d.v !== null);
+  return (
+    <div className="grid md:grid-cols-2 gap-4" data-testid={`risk-charts-${r.asset || ""}`}>
+      <div data-testid="chart-equity-drawdown">
+        <div className="text-[9px] text-term-muted mb-1">EQUITY + DRAWDOWN OVERLAY · {r.days}d · {r.candles} bars</div>
+        <ResponsiveContainer width="100%" height={150}>
+          <ComposedChart data={overlay} margin={{ top: 5, right: 6, left: -18, bottom: 0 }}>
+            <CartesianGrid stroke="#111827" />
+            <XAxis dataKey="i" tick={AX} hide />
+            <YAxis yAxisId="l" tick={AX} /><YAxis yAxisId="r" orientation="right" tick={AX} />
+            <Tooltip contentStyle={TT} />
+            <Area yAxisId="r" dataKey="dd" name="drawdown %" stroke="#ff003c" fill="#ff003c22" strokeWidth={1} />
+            <Line yAxisId="l" dataKey="equity" name="equity" stroke="#39ff14" dot={false} strokeWidth={1.5} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+      <div data-testid="chart-risk-radar">
+        <div className="text-[9px] text-term-muted mb-1">RISK-ADJUSTED PROFILE · normalised 0–100</div>
+        <ResponsiveContainer width="100%" height={150}>
+          <RadarChart data={radar} outerRadius={55}>
+            <PolarGrid stroke="#1f2937" />
+            <PolarAngleAxis dataKey="metric" tick={{ fontSize: 8, fill: "#9ca3af" }} />
+            <Radar dataKey="v" stroke="#00e5ff" fill="#00e5ff33" strokeWidth={1.5} />
+            <Tooltip contentStyle={TT} />
+          </RadarChart>
+        </ResponsiveContainer>
+      </div>
+      <div data-testid="chart-stress">
+        <div className="text-[9px] text-term-muted mb-1">CRASH TESTS · worst-case loss %</div>
+        <ResponsiveContainer width="100%" height={150}>
+          <BarChart data={stress} margin={{ top: 5, right: 6, left: -18, bottom: 0 }}>
+            <CartesianGrid stroke="#111827" />
+            <XAxis dataKey="name" tick={{ fontSize: 7, fill: "#6b7280" }} interval={0} />
+            <YAxis tick={AX} /><Tooltip contentStyle={TT} />
+            <Bar dataKey="loss" name="loss %">
+              {stress.map((s, i) => <Cell key={i} fill={s.survived ? "#ffd60a" : "#ff003c"} />)}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+      <div data-testid="chart-montecarlo">
+        <div className="text-[9px] text-term-muted mb-1">MONTE CARLO · {mc.iterations || 0} runs · outcome distribution (return %)</div>
+        <ResponsiveContainer width="100%" height={150}>
+          <BarChart data={band} margin={{ top: 5, right: 6, left: -18, bottom: 0 }}>
+            <CartesianGrid stroke="#111827" />
+            <XAxis dataKey="name" tick={AX} /><YAxis tick={AX} /><Tooltip contentStyle={TT} />
+            <Bar dataKey="v" name="return %">
+              {band.map((d, i) => <Cell key={i} fill={(d.v || 0) >= 0 ? "#39ff14" : "#ff003c"} />)}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
 
 const pct = (v, d = 2) => (v === null || v === undefined ? "—" : `${Number(v).toFixed(d)}%`);
 const num = (v, d = 2) => (v === null || v === undefined ? "∞" : Number(v).toFixed(d));
@@ -14,13 +94,6 @@ function Card({ label, value, cls = "text-white", testId }) {
       <div className={`tnum text-sm font-bold ${cls}`}>{value}</div>
     </div>
   );
-}
-
-function Spark({ data, color = "#39ff14", neg = false }) {
-  if (!data?.length) return null;
-  const w = 320, h = 60, min = Math.min(...data), max = Math.max(...data), r = max - min || 1;
-  const pts = data.map((v, i) => `${(i / (data.length - 1)) * w},${h - ((v - min) / r) * h}`).join(" ");
-  return <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-14"><polyline points={pts} fill="none" stroke={neg ? "#ff003c" : color} strokeWidth="1.5" /></svg>;
 }
 
 function AssetReport({ asset, r, onRun, running }) {
@@ -62,22 +135,7 @@ function AssetReport({ asset, r, onRun, running }) {
             <Card label="SLIPPAGE" value={`${num(ex.slippage_bps, 1)} bps`} />
             <Card label="HEALTH" value={`${r.health?.score ?? "—"} ${r.health?.band || ""}`} cls={r.health?.band === "SAFE" ? "text-neon-green" : r.health?.band === "CRITICAL" ? "text-neon-red" : "text-neon-amber"} testId={`health-${asset}`} />
           </div>
-          <div className="grid md:grid-cols-2 gap-3">
-            <div><div className="text-[9px] text-term-muted mb-1">EQUITY CURVE · ${r.cash || 10000} start · {r.days}d · {r.candles} bars</div><Spark data={r.equity_curve} /></div>
-            <div><div className="text-[9px] text-term-muted mb-1">DRAWDOWN</div><Spark data={r.drawdown_curve} neg /></div>
-          </div>
-          <div>
-            <div className="text-[9px] text-term-muted mb-1">CRASH TESTS · fully-invested worst case</div>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-              {(r.stress || []).map((s) => (
-                <div key={s.scenario} className="border border-term-border rounded p-2" data-testid={`stress-${asset}-${s.scenario}`}>
-                  <div className="text-[9px] text-term-muted uppercase">{s.scenario.replace(/_/g, " ")}</div>
-                  <div className={`tnum text-sm font-bold ${s.survived ? "text-neon-amber" : "text-neon-red"}`}>−{pct(s.loss_pct, 1)}</div>
-                  <div className="text-[9px] text-term-muted">{s.survived ? "survives" : "RUIN"}</div>
-                </div>
-              ))}
-            </div>
-          </div>
+          <RiskCharts r={{ ...r, asset }} />
           <div>
             <div className="text-[9px] text-term-muted mb-1">BENCHMARKS · strategy {pct(r.benchmark?.strategy_return)}</div>
             <div className="flex flex-wrap gap-2 text-[10px]">

@@ -10,8 +10,8 @@ import brokers
 import ledger
 import strategy
 from db import db, now_ms
-from exchange_service import (all_balances, cancel_stop, client_from_doc, ensure_funds, friendly, market_order, place_oco, place_stop,
-                              resolve_symbol, stop_status, total_usd)
+from exchange_service import (all_balances, cancel_stop, client_from_doc, ensure_funds, equity_usd_priced, friendly, market_order, place_oco, place_stop,
+                              resolve_symbol, stop_status)
 from market import ASSETS as MARKET_ASSETS, SNAPSHOT
 
 START_CASH = 10000.0
@@ -34,13 +34,19 @@ MASTER_UID = "MASTER"
 
 
 async def get_creds(uid: str):
-    """User's own exchange key, else the house MASTER key (used to trade ledger-bridged fiat deposits)."""
-    own = await db.exchange_credentials.find_one({"user_id": uid}, {"_id": 0})
+    """User's PRIMARY own exchange key, else the house MASTER key (used to trade ledger-bridged fiat deposits)."""
+    own = await db.exchange_credentials.find_one({"user_id": uid, "primary": True}, {"_id": 0}) \
+        or await db.exchange_credentials.find_one({"user_id": uid}, {"_id": 0})
     if own:
         return own
     if uid == MASTER_UID:
         return None
     return await db.exchange_credentials.find_one({"user_id": MASTER_UID}, {"_id": 0})
+
+
+async def get_all_creds(uid: str) -> list:
+    """Every exchange the user has connected (used to aggregate equity across the whole system)."""
+    return await db.exchange_credentials.find({"user_id": uid}, {"_id": 0}).to_list(50)
 
 
 async def with_exchange(uid: str, fn):
@@ -656,14 +662,63 @@ async def reconcile(bot: dict):
         await ex.close()
 
 
+_equity_locks: dict = {}
+
+
 async def refresh_live_equity(bot: dict):
+    uid = bot["user_id"]
+    lock = _equity_locks.setdefault(uid, asyncio.Lock())
+    if lock.locked():
+        return  # a refresh is already in flight for this user — avoid concurrent ccxt clients (fd collisions)
+    async with lock:
+        await _refresh_live_equity(bot)
+
+
+async def _refresh_live_equity(bot: dict):
+    uid = bot["user_id"]
+    own = await get_all_creds(uid)
+    if own:
+        primary_name = next((c["exchange"] for c in own if c.get("primary")), own[0]["exchange"])
+        total_eq, per_ex, primary_ctx = 0.0, {}, None
+        for creds in own:
+            ex, keep = None, False
+            try:
+                ex = client_from_doc(creds)
+                bal = await all_balances(ex, creds["exchange"])
+                eq = await equity_usd_priced(ex, creds["exchange"], bal, SNAPSHOT.get("price") or 0)
+                total_eq += eq
+                per_ex[creds["exchange"]] = round(eq, 2)
+                if creds["exchange"] == primary_name and primary_ctx is None:
+                    primary_ctx, keep = (creds, ex, bal), True
+            except Exception as e:
+                log_.warning("live equity failed (%s): %s", creds.get("exchange"), e)
+            finally:
+                if ex is not None and not keep:
+                    await ex.close()
+        total_eq = round(total_eq, 2)
+        await set_bot(uid, live_equity=total_eq, equity_by_exchange=per_ex)
+        fresh = await db.bots.find_one({"user_id": uid}, {"start_equity": 1})
+        if total_eq > 0 and fresh and not fresh.get("start_equity"):
+            await set_bot(uid, start_equity=total_eq, start_ts=now_ms())
+        if primary_ctx:
+            creds, ex, bal = primary_ctx
+            try:
+                if "position_qty" in bot:
+                    await sync_position(bot, bal, ex, creds["exchange"])
+                    fresh = await db.bots.find_one({"user_id": uid})
+                    await sync_stops(ex, creds["exchange"], fresh)
+            except Exception as e:
+                log_.warning("primary position sync failed: %s", e)
+            finally:
+                await ex.close()
+        return
     creds = await get_creds(bot["user_id"])
     if not creds:
         return
     ex = client_from_doc(creds)
     try:
         bal = await all_balances(ex, creds["exchange"])
-        eq = total_usd(bal, SNAPSHOT.get("price") or 0)
+        eq = await equity_usd_priced(ex, creds["exchange"], bal, SNAPSHOT.get("price") or 0)
         if creds["user_id"] == MASTER_UID:
             import funding
             cap = float(await funding.trading_capital(bot["user_id"]))

@@ -319,9 +319,13 @@ function ExchangeTab({ bot, refresh, connected, preset }) {
   const [password, setPassword] = useState("");
   const [test, setTest] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [list, setList] = useState([]);
+  const [adding, setAdding] = useState(false);
   const needsPass = ["okx", "kucoin", "bitget"].includes(exchange);
 
+  const loadList = () => api.get("/exchange/connected").then((r) => setList(r.data || [])).catch(() => {});
   useEffect(() => { api.get("/exchange/list").then((r) => { setExchanges(r.data); if (!preset && r.data[0]) setExchange(r.data[2] || r.data[0]); }).catch(() => {}); }, [preset]);
+  useEffect(() => { loadList(); }, [connected]);
 
   const connect = async () => {
     setBusy(true);
@@ -329,12 +333,16 @@ function ExchangeTab({ bot, refresh, connected, preset }) {
       const { data } = await api.post("/exchange/connect", { exchange, api_key: apiKey, secret, password });
       toast.success(`Connected to ${exchange}${data.hostname ? ` (${data.hostname})` : ""} · LIVE`);
       (data.warnings || []).forEach((w) => toast.warning(w, { duration: 12000 }));
-      setApiKey(""); setSecret(""); setPassword(""); refresh();
+      setApiKey(""); setSecret(""); setPassword(""); setAdding(false); loadList(); refresh();
     }
     catch (e) { toast.error(formatApiErrorDetail(e.response?.data?.detail)); }
     finally { setBusy(false); }
   };
-  const disconnect = async () => { await api.post("/exchange/disconnect"); toast.success("Disconnected"); refresh(); };
+  const removeEx = async (ex) => { await api.post("/exchange/disconnect", { exchange: ex }); toast.success(`Removed ${ex}`); loadList(); refresh(); };
+  const makePrimary = async (ex) => {
+    try { await api.post("/exchange/primary", { exchange: ex }); toast.success(`${ex} is now the primary trading exchange`); loadList(); refresh(); }
+    catch (e) { toast.error(formatApiErrorDetail(e.response?.data?.detail)); }
+  };
 
   const testOrder = async () => {
     setBusy(true);
@@ -347,34 +355,50 @@ function ExchangeTab({ bot, refresh, connected, preset }) {
     finally { setBusy(false); }
   };
 
-  if (connected)
+  if (list.length && !adding)
     return (
       <div className="space-y-3">
-      <div className="flex items-center justify-between border border-neon-green/40 bg-neon-green/5 p-3">
-        <div className="text-xs">
-          <div className="text-neon-green tracking-[0.15em]">● CONNECTED</div>
-          <div className="text-term-muted mt-1 uppercase">{bot?.exchange}</div>
+        <div className="space-y-2" data-testid="connected-exchanges">
+          {list.map((x) => (
+            <div key={x.exchange} data-testid={`exchange-row-${x.exchange}`} className="flex items-center justify-between border border-neon-green/40 bg-neon-green/5 p-2.5">
+              <div className="text-xs">
+                <div className="text-neon-green tracking-[0.15em] flex items-center gap-2">
+                  ● <span className="uppercase">{x.exchange}</span>
+                  {x.primary && <span data-testid={`primary-badge-${x.exchange}`} className="text-[8px] text-neon-amber border border-neon-amber/50 px-1 tracking-widest">PRIMARY</span>}
+                </div>
+                <div className="text-term-muted mt-1 tnum">{x.hostname || ""}{x.equity != null ? ` · $${Number(x.equity).toFixed(2)}` : ""}</div>
+              </div>
+              <div className="flex items-center gap-1.5">
+                {!x.primary && <button data-testid={`set-primary-${x.exchange}`} onClick={() => makePrimary(x.exchange)}
+                  className="border border-neon-cyan text-neon-cyan hover:bg-neon-cyan hover:text-black px-2 py-1 text-[9px] tracking-wide">SET PRIMARY</button>}
+                <button data-testid={`remove-exchange-${x.exchange}`} onClick={() => removeEx(x.exchange)}
+                  className="border border-neon-red text-neon-red hover:bg-neon-red hover:text-black px-2 py-1 text-[9px] flex items-center gap-1"><Unplug size={10} /> REMOVE</button>
+              </div>
+            </div>
+          ))}
         </div>
-        <button data-testid="disconnect-exchange-button" onClick={disconnect}
-          className="border border-neon-red text-neon-red hover:bg-neon-red hover:text-black transition-colors px-3 py-1.5 text-xs flex items-center gap-1"><Unplug size={12} /> DISCONNECT</button>
-      </div>
-      <ExchangeTools refresh={refresh} />
-      <button data-testid="live-test-order-button" onClick={testOrder} disabled={busy}
-        className="w-full border border-neon-magenta text-neon-magenta hover:bg-neon-magenta hover:text-black transition-colors py-2 text-xs tracking-[0.2em] disabled:opacity-30">
-        {busy ? "EXECUTING LIVE ORDER…" : "FIRE LIVE TEST ORDER (MIN SIZE BUY → SELL)"}
-      </button>
-      {test && (
-        <div data-testid="live-test-order-result" className="text-[10px] tnum border border-neon-green/40 bg-neon-green/5 p-2 space-y-1">
-          <div className="text-neon-green">BUY #{test.buy.id} · {test.buy.status} · {test.buy.filled} BTC @ {test.buy.average ?? test.price}</div>
-          <div className="text-neon-red">SELL #{test.sell.id} · {test.sell.status} · {test.sell.filled} BTC @ {test.sell.average ?? test.price}</div>
-          <div className="text-term-muted">{test.symbol} · ${test.usd}</div>
-        </div>
-      )}
+        <p className="text-[9px] text-term-muted">Funds across every connected exchange are summed into FUNDS AVAILABLE TO PREDICT. The PRIMARY exchange is the one the bot places spot orders on.</p>
+        <button data-testid="add-exchange-button" onClick={() => setAdding(true)}
+          className="w-full border border-neon-green/60 text-neon-green hover:bg-neon-green hover:text-black transition-colors py-2 text-xs tracking-[0.2em]">+ ADD ANOTHER EXCHANGE</button>
+        <ExchangeTools refresh={refresh} />
+        <button data-testid="live-test-order-button" onClick={testOrder} disabled={busy}
+          className="w-full border border-neon-magenta text-neon-magenta hover:bg-neon-magenta hover:text-black transition-colors py-2 text-xs tracking-[0.2em] disabled:opacity-30">
+          {busy ? "EXECUTING LIVE ORDER…" : "FIRE LIVE TEST ORDER (MIN SIZE BUY → SELL)"}
+        </button>
+        {test && (
+          <div data-testid="live-test-order-result" className="text-[10px] tnum border border-neon-green/40 bg-neon-green/5 p-2 space-y-1">
+            <div className="text-neon-green">BUY #{test.buy.id} · {test.buy.status} · {test.buy.filled} BTC @ {test.buy.average ?? test.price}</div>
+            <div className="text-neon-red">SELL #{test.sell.id} · {test.sell.status} · {test.sell.filled} BTC @ {test.sell.average ?? test.price}</div>
+            <div className="text-term-muted">{test.symbol} · ${test.usd}</div>
+          </div>
+        )}
       </div>
     );
 
   return (
     <div className="space-y-3">
+      {list.length > 0 && <button data-testid="cancel-add-exchange" onClick={() => setAdding(false)}
+        className="text-[10px] text-term-muted hover:text-white">← back to connected exchanges</button>}
       <div>
         <span className="panel-label text-[9px]">EXCHANGE</span>
         <select data-testid="exchange-select" value={exchange} onChange={(e) => setExchange(e.target.value)}

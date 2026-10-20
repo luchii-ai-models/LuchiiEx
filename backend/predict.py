@@ -156,7 +156,7 @@ async def worker():
 
 # ---------- AI auto-predict: uses every dollar already in the system (ledger USD + exchange equity), 3s contracts ----------
 AUTO_CONF, AUTO_DURATION = 0.80, int(os.environ.get("PREDICT_AUTO_DURATION", "3"))
-AUTO_STAKE_PCT, AUTO_MAX_STAKE, DAILY_LOSS_PCT = Decimal(os.environ.get("PREDICT_AUTO_STAKE_PCT", "1.0")), MAX_STAKE, Decimal(os.environ.get("PREDICT_DAILY_LOSS_PCT", "0.25"))
+AUTO_STAKE_PCT, AUTO_MAX_STAKE, DAILY_LOSS_PCT = Decimal(os.environ.get("PREDICT_AUTO_STAKE_PCT", "0.10")), MAX_STAKE, Decimal(os.environ.get("PREDICT_DAILY_LOSS_PCT", "0.25"))
 MIRROR_ACCOUNT = ("EXCHANGE_MIRROR_USD", "User exchange equity mirrored for Predict", "ASSET", "USD")
 
 
@@ -185,11 +185,63 @@ async def ensure_funds(uid: str, need: Decimal) -> Decimal:
     return avail + top
 
 
+async def reload_buying_power(uid: str) -> dict:
+    """Operator action (house absorbs prior Predict losses): top the Predict wallet up to the user's
+    full current exchange equity so AVAILABLE TO PREDICT == exchange balance again."""
+    await ensure_accounts()
+    try:
+        import engine
+        await engine.refresh_live_equity({"user_id": uid})
+    except Exception:  # noqa: BLE001
+        pass
+    bot = await db.bots.find_one({"user_id": uid}, {"_id": 0, "live_equity": 1})
+    equity = Decimal(str((bot or {}).get("live_equity") or 0)).quantize(Decimal("0.01"))
+    wallets = {w["currency"]: w for w in await ledger.user_wallets(uid)}
+    cash = Decimal(str((wallets.get("USD") or {}).get("available", 0))).quantize(Decimal("0.01"))
+    top = (equity - cash).quantize(Decimal("0.01"))
+    if top <= 0:
+        return {"ok": True, "reloaded": 0.0, "available": float(max(cash, equity))}
+    await db.ledger_accounts.update_one({"code": MIRROR_ACCOUNT[0]}, {"$setOnInsert": {"id": str(uuid.uuid4()), "code": MIRROR_ACCOUNT[0], "name": MIRROR_ACCOUNT[1],
+                                                                                      "account_type": "ASSET", "currency": "USD", "user_id": None, "created_at": now_ms()}}, upsert=True)
+    ref = str(uuid.uuid4())
+    je = await ledger.post_journal([{"account": MIRROR_ACCOUNT[0], "debit": top}, {"account": ledger.user_code(uid, "USD"), "credit": top}], source="SYSTEM",
+                                   description=f"Reload Predict buying power to exchange equity (house absorbs ${top} prior losses)",
+                                   reference_type="EXCHANGE_MIRROR", reference_id=ref, idempotency_key=f"reload:{ref}", actor_id=uid)
+    await db.journal_entries.update_one({"id": je["id"]}, {"$set": {"amount": str(top)}})
+    return {"ok": True, "reloaded": float(top), "available": float(equity)}
+
+
 async def total_funds(uid: str) -> Decimal:
     wallets = {w["currency"]: w for w in await ledger.user_wallets(uid)}
     avail = Decimal(str((wallets.get("USD") or {}).get("available", 0)))
     bot = await db.bots.find_one({"user_id": uid}, {"_id": 0, "live_equity": 1})
     return avail + max(Decimal(0), Decimal(str((bot or {}).get("live_equity") or 0)) - await mirrored(uid))
+
+
+async def funds_detail(uid: str) -> dict:
+    """Every dollar in the system the AI can stake for this user: ledger USD + free exchange equity."""
+    wallets = {w["currency"]: w for w in await ledger.user_wallets(uid)}
+    ledger_usd = Decimal(str((wallets.get("USD") or {}).get("available", 0)))
+    bot = await db.bots.find_one({"user_id": uid}, {"_id": 0, "live_equity": 1})
+    equity = Decimal(str((bot or {}).get("live_equity") or 0))
+    mir = await mirrored(uid)
+    exchange_free = max(Decimal(0), equity - mir)
+    return {"ledgerUsd": float(ledger_usd), "exchangeEquity": float(equity), "mirrored": float(mir),
+            "exchangeFree": float(exchange_free), "total": float(ledger_usd + exchange_free)}
+
+
+async def sync_available(uid: str) -> Decimal:
+    """Refresh the user's live exchange equity on demand (throttled ~8s) so funds reflect the whole system, then return total available."""
+    import time as _t
+    bot = await db.bots.find_one({"user_id": uid}, {"_id": 0, "live_equity_ts": 1})
+    if bot is not None and _t.time() - (bot.get("live_equity_ts") or 0) > 8:
+        try:
+            import engine
+            await engine.refresh_live_equity({"user_id": uid})
+            await db.bots.update_one({"user_id": uid}, {"$set": {"live_equity_ts": _t.time()}})
+        except Exception:  # noqa: BLE001
+            pass
+    return await total_funds(uid)
 
 
 def ai_direction(asset: str) -> tuple[str | None, float]:
@@ -222,7 +274,7 @@ async def auto_tick():
         uid = bot["user_id"]
         if bot.get("kill_switch"):
             continue
-        avail = await total_funds(uid)
+        avail = await sync_available(uid)
         if avail < MIN_STAKE:
             continue
         if await _daily_net(uid) <= -max(Decimal("2"), avail * DAILY_LOSS_PCT):

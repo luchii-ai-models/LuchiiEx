@@ -351,9 +351,16 @@ async def predict_status(user=Depends(current_user)):
     quotes = {a: {"price": predict.price_of(a), "confidence": round(predict.confidence_for(a), 3), "aiSignal": predict.ai_direction(a)[0],
                   "payouts": {d: predict.payout_multiplier(predict.confidence_for(a), d) for d in sorted(predict.DURATIONS)}} for a in predict.ASSETS}
     bot = await db.bots.find_one({"user_id": user["id"]}, {"_id": 0, "auto_predict": 1})
-    return {**predict.status(), "autoPredict": (bot or {}).get("auto_predict", True) is not False, "funds": float(await predict.total_funds(user["id"])),
+    return {**predict.status(), "autoPredict": (bot or {}).get("auto_predict", True) is not False, "funds": float(await predict.sync_available(user["id"])),
+            "fundsDetail": await predict.funds_detail(user["id"]),
             "autoRules": {"minConfidence": predict.AUTO_CONF, "duration": predict.AUTO_DURATION,
             "stakePct": float(predict.AUTO_STAKE_PCT), "maxStake": float(predict.AUTO_MAX_STAKE), "dailyLossPct": float(predict.DAILY_LOSS_PCT)}, "quotes": quotes}
+
+
+@r.post("/predict/reload")
+async def predict_reload(user=Depends(current_user)):
+    """Operator reload: top Predict buying power back up to the full exchange balance (house absorbs prior losses)."""
+    return await predict.reload_buying_power(user["id"])
 
 
 @r.post("/predict/contracts", status_code=201)
